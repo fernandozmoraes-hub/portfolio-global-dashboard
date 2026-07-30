@@ -7,6 +7,10 @@ import {
 import { evaluateRiskLimits, type RiskLimit } from "@/domain/risk/limits";
 import { resolveDimension } from "@/domain/exposure/derive";
 import {
+  resolveCurrentPortfolio,
+  type SourceFreshness,
+} from "@/domain/positions/current";
+import {
   EXPOSURE_DIMENSIONS,
   type DimensionWeight,
   type ExposureDimension,
@@ -45,6 +49,9 @@ export interface PortfolioRow {
 
 export interface PortfolioView {
   readonly referenceDate: string | null;
+  readonly sources: readonly SourceFreshness[];
+  readonly hasMixedDates: boolean;
+  readonly hasStaleSources: boolean;
   readonly totalBRL: number;
   readonly rows: readonly PortfolioRow[];
   readonly hasDemoData: boolean;
@@ -59,16 +66,20 @@ export async function getPortfolioView(
   ]);
 
   if (referenceDate === null) {
-    return { referenceDate: null, totalBRL: 0, rows: [], hasDemoData: hasDemo };
+    return {
+      referenceDate: null, sources: [], hasMixedDates: false,
+      hasStaleSources: false, totalBRL: 0, rows: [], hasDemoData: hasDemo,
+    };
   }
 
-  const [positions, fx, limits] = await Promise.all([
-    repo.getPositions(db, referenceDate),
+  const [allPositions, fx, limits] = await Promise.all([
+    repo.getAllPositions(db),
     repo.getFxTable(db, referenceDate),
     repo.getRiskLimits(db),
   ]);
 
-  const exposures = consolidatePositions(positions, fx);
+  const current = resolveCurrentPortfolio(allPositions, referenceDate, fx);
+  const exposures = consolidatePositions(current.positions, fx);
   const totalBRL = totalFinancialValueBRL(exposures);
   const alerts = evaluateRiskLimits(exposures, limits);
 
@@ -97,7 +108,15 @@ export async function getPortfolioView(
     severity: severityByTicker.get(exposure.ticker) ?? "OK",
   }));
 
-  return { referenceDate, totalBRL, rows, hasDemoData: hasDemo };
+  return {
+    referenceDate: current.newestDate ?? referenceDate,
+    sources: current.sources,
+    hasMixedDates: current.hasMixedDates,
+    hasStaleSources: current.hasStaleSources,
+    totalBRL,
+    rows,
+    hasDemoData: hasDemo,
+  };
 }
 
 /** Teto individual aplicável ao ativo, conforme seu risk bucket. */
@@ -143,18 +162,19 @@ export async function getAssetDetail(
   const referenceDate = await repo.getLatestPositionDate(db);
   if (referenceDate === null) return null;
 
-  const [positions, fx, limits, overrides, assetTypes, transactions, income] =
+  const [allPositions, fx, limits, overrides, classifications, transactions, income] =
     await Promise.all([
-      repo.getPositions(db, referenceDate),
+      repo.getAllPositions(db),
       repo.getFxTable(db, referenceDate),
       repo.getRiskLimits(db),
       repo.getExposureOverrides(db),
-      repo.getAssetTypes(db),
+      repo.getAssetClassifications(db),
       repo.getTransactionsByAsset(db, assetId),
       repo.getIncomeByAsset(db, assetId),
     ]);
 
-  const exposures = consolidatePositions(positions, fx);
+  const current = resolveCurrentPortfolio(allPositions, referenceDate, fx);
+  const exposures = consolidatePositions(current.positions, fx);
   const totalBRL = totalFinancialValueBRL(exposures);
   const exposure = exposures.find((item) => item.assetId === assetId);
   if (!exposure) return null;
@@ -165,13 +185,16 @@ export async function getAssetDetail(
   );
 
   const assetOverrides = overrides.get(assetId);
+  const classification = classifications.get(assetId);
   const tags = {
-    assetType: assetTypes.get(assetId) ?? "OUTROS",
+    assetType: classification?.assetType ?? "OUTROS",
     assetClass: exposure.assetClass,
     country: exposure.country,
     currency: exposure.currency,
     sector: exposure.sector,
     riskBucket: exposure.riskBucket,
+    investmentStyle: classification?.investmentStyle ?? "NAO_APLICAVEL",
+    indexador: classification?.indexador ?? ("NONE" as const),
     name: exposure.assetName,
   };
 

@@ -28,15 +28,20 @@
  *   GEOGRAFIA    Estados Unidos       R$ 100.000   (100% da posição)
  *   MOEDA        USD                  R$ 100.000   (100% da posição)
  *   SETOR/TEMA   Tecnologia / AI      R$ 100.000   (100% da posição)
- *   ESTILO       Core                 R$ 100.000   (100% da posição)
+ *   ESTILO       Growth               R$ 100.000   (100% da posição)
+ *   RISK BUCKET  Core                 R$ 100.000   (100% da posição)
  *   MACRO        Equity EUA           R$ 100.000   (100% da posição)
  *
- * Seis leituras do MESMO dinheiro, cada uma respondendo a uma pergunta
+ * Sete leituras do MESMO dinheiro, cada uma respondendo a uma pergunta
  * diferente. Nenhuma divisão artificial.
  *
+ * Note ESTILO=Growth e RISK BUCKET=Core na mesma linha: são dimensões
+ * distintas. Estilo descreve o ATIVO (busca crescimento); risk bucket descreve
+ * o DIMENSIONAMENTO da posição (estrutural, teto de 5%).
+ *
  * Divisão dentro de uma dimensão só acontece quando é economicamente real:
- * uma debênture incentivada é genuinamente parte crédito e parte inflação
- * dentro da dimensão MACRO — não há como separar o papel em dois.
+ * um papel indexado ao IPCA carrega juros real e inflação ao mesmo tempo,
+ * e não há como separá-lo em dois.
  */
 
 export const EXPOSURE_DIMENSIONS = [
@@ -45,6 +50,7 @@ export const EXPOSURE_DIMENSIONS = [
   "MOEDA",
   "SETOR_TEMA",
   "ESTILO",
+  "RISK_BUCKET",
   "MACRO",
 ] as const;
 
@@ -55,7 +61,8 @@ export const DIMENSION_LABELS: Record<ExposureDimension, string> = {
   GEOGRAFIA: "Geografia",
   MOEDA: "Moeda",
   SETOR_TEMA: "Setor / Tema",
-  ESTILO: "Estilo",
+  ESTILO: "Estilo de investimento",
+  RISK_BUCKET: "Papel na carteira",
   MACRO: "Fatores macro",
 };
 
@@ -64,15 +71,16 @@ export const DIMENSION_QUESTIONS: Record<ExposureDimension, string> = {
   GEOGRAFIA: "A que economia esse dinheiro está exposto?",
   MOEDA: "Em que moeda esse dinheiro está denominado?",
   SETOR_TEMA: "A que setor ou tema esse dinheiro está exposto?",
-  ESTILO: "Que papel essa posição cumpre na carteira?",
+  ESTILO: "Que tipo de retorno esse ativo busca?",
+  RISK_BUCKET: "Que papel a posição cumpre e quanto ela pode pesar?",
   MACRO: "A que choque macroeconômico esse dinheiro reage?",
 };
 
 // ---------------------------------------------------------------------------
 // Catálogo de tags por dimensão
 // ---------------------------------------------------------------------------
-// CLASSE, MOEDA e ESTILO derivam de campos que o ativo já tem (asset_class,
-// currency, risk_bucket) e por isso não precisam de catálogo próprio aqui.
+// CLASSE, MOEDA e RISK_BUCKET derivam de campos que o ativo já tem
+// (asset_class, currency, risk_bucket) e reusam os enums de shared/types.
 
 export const GEOGRAPHY_TAGS = [
   "BRASIL",
@@ -127,6 +135,41 @@ export const SECTOR_THEME_LABELS: Record<SectorThemeTag, string> = {
 };
 
 /**
+ * ESTILO DE INVESTIMENTO — característica do ATIVO.
+ *
+ * NÃO confundir com `risk_bucket`, que é decisão de DIMENSIONAMENTO da posição
+ * (quanto ela pode pesar: CORE 5%, GROWTH 3%, ASYMMETRIC 0,5%).
+ *
+ * O termo "growth" existe nos dois com sentidos diferentes: aqui significa
+ * "ativo que busca crescimento de receita"; em risk_bucket significa "posição
+ * que, por ser mais volátil, tem teto de 3%". Um ETF de índice pode ser
+ * ESTILO=INDICE e RISK_BUCKET=CORE ao mesmo tempo.
+ */
+export const STYLE_TAGS = [
+  "VALUE",
+  "GROWTH",
+  "BLEND",
+  "QUALIDADE",
+  "DIVIDENDOS",
+  "INDICE",
+  "RENDA",
+  "NAO_APLICAVEL",
+] as const;
+
+export type StyleTag = (typeof STYLE_TAGS)[number];
+
+export const STYLE_LABELS: Record<StyleTag, string> = {
+  VALUE: "Value",
+  GROWTH: "Growth",
+  BLEND: "Blend",
+  QUALIDADE: "Qualidade",
+  DIVIDENDOS: "Dividendos",
+  INDICE: "Índice / passivo",
+  RENDA: "Renda / juros",
+  NAO_APLICAVEL: "Não aplicável",
+};
+
+/**
  * Fatores macro: a que choque a posição reage.
  *
  * TECNOLOGIA saiu daqui de propósito — ela é um SETOR, não um fator macro.
@@ -139,7 +182,7 @@ export const MACRO_TAGS = [
   "CREDITO_BR",
   "EQUITY_BR",
   "EQUITY_US",
-  "EQUITY_GLOBAL",
+  "EQUITY_EMERGENTES",
   "COMMODITIES",
   "IMOBILIARIO",
   "DURATION_USD",
@@ -155,7 +198,7 @@ export const MACRO_LABELS: Record<MacroTag, string> = {
   CREDITO_BR: "Crédito Brasil",
   EQUITY_BR: "Equity Brasil",
   EQUITY_US: "Equity EUA",
-  EQUITY_GLOBAL: "Equity Global / Emergentes",
+  EQUITY_EMERGENTES: "Equity Emergentes",
   COMMODITIES: "Commodities",
   IMOBILIARIO: "Imobiliário",
   DURATION_USD: "Duration USD",
@@ -195,6 +238,8 @@ export function labelFor(dimension: ExposureDimension, tag: string): string {
       return GEOGRAPHY_LABELS[tag as GeographyTag] ?? tag;
     case "SETOR_TEMA":
       return SECTOR_THEME_LABELS[tag as SectorThemeTag] ?? tag;
+    case "ESTILO":
+      return STYLE_LABELS[tag as StyleTag] ?? tag;
     case "MACRO":
       return MACRO_LABELS[tag as MacroTag] ?? tag;
     default:

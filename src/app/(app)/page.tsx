@@ -6,6 +6,7 @@ import { EmptyState } from "@/components/portfolio/EmptyState";
 import { KpiCard } from "@/components/portfolio/KpiCard";
 import { TargetBars } from "@/components/portfolio/TargetBars";
 import { TopExposures } from "@/components/portfolio/TopExposures";
+import { SourceFreshnessPanel } from "@/components/portfolio/SourceFreshness";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { createClient } from "@/data/supabase/server";
@@ -35,13 +36,20 @@ export default async function DashboardPage() {
           </h1>
           <p className="mt-1 text-sm text-[var(--muted-foreground)]">
             {data.referenceDate
-              ? `Último fechamento: ${formatDate(data.referenceDate)}`
+              ? `Posições até ${formatDate(data.referenceDate)}${
+                  data.hasMixedDates ? " · fontes em datas diferentes" : ""
+                }`
               : "Nenhuma posição importada"}
           </p>
         </div>
-        {data.hasDemoData ? (
-          <Badge variant="attention">Dados demonstrativos</Badge>
-        ) : null}
+        <div className="flex items-center gap-2">
+          {data.hasStaleSources ? (
+            <Badge variant="attention">Fonte desatualizada</Badge>
+          ) : null}
+          {data.hasDemoData ? (
+            <Badge variant="attention">Dados demonstrativos</Badge>
+          ) : null}
+        </div>
       </header>
 
       {data.isEmpty ? (
@@ -185,6 +193,24 @@ export default async function DashboardPage() {
           </CardHeader>
           <CardContent>
             <TargetBars rows={data.allocation} />
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* ---------------- Atualização das fontes ---------------- */}
+      <section className="mt-4">
+        <Card>
+          <CardHeader>
+            <CardTitle>Atualização por fonte</CardTitle>
+            <p className="text-xs text-[var(--muted-foreground)]">
+              Cada conta entra com a sua última data disponível.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <SourceFreshnessPanel
+              sources={data.sources}
+              hasMixedDates={data.hasMixedDates}
+            />
           </CardContent>
         </Card>
       </section>

@@ -1,5 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { PositionInput } from "@/domain/consolidation/consolidate";
+import type { DatedPosition } from "@/domain/positions/current";
+import type { AssetClassification } from "@/domain/exposure/compute";
+import type { RateIndex } from "@/domain/exposure/derive";
 import type { AllocationTarget } from "@/domain/allocation/gap";
 import type { RiskLimit } from "@/domain/risk/limits";
 import type {
@@ -58,8 +61,13 @@ export interface RealEstateRow {
 }
 
 /**
- * Data de referência das posições mais recentes.
- * `null` quando ainda não há nenhuma posição — carteira nova, sem importação.
+ * Data da posição mais recente da base INTEIRA.
+ *
+ * ⚠️ NÃO usar para montar a carteira corrente: corretoras fecham em datas
+ * diferentes, e um corte global descartaria contas atualizadas em outro dia.
+ * Serve apenas como "existe alguma posição?" e como padrão de data para o
+ * fechamento mensal. Para a carteira corrente use `getAllPositions` +
+ * `resolveCurrentPortfolio`.
  */
 export async function getLatestPositionDate(
   db: SupabaseClient,
@@ -130,15 +138,94 @@ export async function getPositions(
   return positions;
 }
 
-/** Mapa assetId -> asset_type, usado pela derivação de fatores. */
-export async function getAssetTypes(
+/**
+ * TODAS as posições conhecidas, com sua data.
+ *
+ * É a entrada de `resolveCurrentPortfolio`, que escolhe — POR CONTA — a data
+ * mais recente de cada uma. Buscar tudo de uma vez evita N consultas (uma por
+ * conta) e mantém a decisão de qual data usar no domínio, onde é testável.
+ */
+export async function getAllPositions(
   db: SupabaseClient,
-): Promise<Map<string, string>> {
-  const { data, error } = await db.from("assets").select("id, asset_type");
-  if (error) throw new Error(`Falha ao ler tipos de ativo: ${error.message}`);
+  since?: string,
+): Promise<DatedPosition[]> {
+  let query = db
+    .from("positions")
+    .select(
+      `quantity, average_cost, current_price, reference_date,
+       accounts!inner ( id, name, brokers!inner ( id, name ) ),
+       assets!inner ( id, ticker, name, asset_class, risk_bucket, currency, country, sector )`,
+    );
+
+  if (since) query = query.gte("reference_date", since);
+
+  const { data, error } = await query.order("reference_date", { ascending: false });
+  if (error) throw new Error(`Falha ao ler posições: ${error.message}`);
+
+  const positions: DatedPosition[] = [];
+
+  for (const row of data ?? []) {
+    const account = one(row.accounts as never);
+    const asset = one(row.assets as never);
+    if (!account || !asset) continue;
+
+    const broker = one((account as { brokers: unknown }).brokers as never);
+    if (!broker) continue;
+
+    const a = asset as {
+      id: string; ticker: string; name: string; asset_class: AssetClass;
+      risk_bucket: RiskBucket; currency: Currency; country: string; sector: string | null;
+    };
+    const ac = account as { id: string; name: string };
+    const b = broker as { id: string; name: string };
+
+    positions.push({
+      accountId: ac.id,
+      accountName: ac.name,
+      brokerId: b.id,
+      brokerName: b.name,
+      assetId: a.id,
+      ticker: a.ticker,
+      assetName: a.name,
+      assetClass: a.asset_class,
+      riskBucket: a.risk_bucket,
+      currency: a.currency,
+      country: a.country,
+      sector: a.sector,
+      quantity: num(row.quantity),
+      averageCost: numOrNull(row.average_cost),
+      currentPrice: num(row.current_price),
+      referenceDate: row.reference_date as string,
+    });
+  }
+
+  return positions;
+}
+
+/**
+ * Atributos de classificação por ativo: tipo, indexador e estilo.
+ *
+ * O indexador é a fonte ÚNICA do fator inflação — nunca o nome do papel nem o
+ * regime tributário.
+ */
+export async function getAssetClassifications(
+  db: SupabaseClient,
+): Promise<Map<string, AssetClassification>> {
+  const { data, error } = await db
+    .from("assets")
+    .select("id, asset_type, indexador, investment_style");
+
+  if (error) throw new Error(`Falha ao ler classificação de ativos: ${error.message}`);
 
   return new Map(
-    (data ?? []).map((row) => [row.id as string, row.asset_type as string]),
+    (data ?? []).map((row) => [
+      row.id as string,
+      {
+        assetType: row.asset_type as string,
+        indexador: (row.indexador as RateIndex) ?? "NONE",
+        investmentStyle: (row.investment_style as string) ?? "NAO_APLICAVEL",
+      },
+    ]),
   );
 }
 

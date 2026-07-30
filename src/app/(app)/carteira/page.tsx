@@ -18,11 +18,20 @@ export default async function CarteiraPage() {
           <h1 className="text-xl font-semibold tracking-tight">Carteira consolidada</h1>
           <p className="mt-1 text-sm text-[var(--muted-foreground)]">
             {view.referenceDate
-              ? `${formatBRL(view.totalBRL)} · posições de ${formatDate(view.referenceDate)}`
+              ? `${formatBRL(view.totalBRL)} · posições até ${formatDate(view.referenceDate)}${
+                  view.hasMixedDates ? " (fontes em datas diferentes)" : ""
+                }`
               : "Nenhuma posição importada"}
           </p>
         </div>
-        {view.hasDemoData ? <Badge variant="attention">Dados demonstrativos</Badge> : null}
+        <div className="flex items-center gap-2">
+          {view.hasStaleSources ? (
+            <Badge variant="attention">Fonte desatualizada</Badge>
+          ) : null}
+          {view.hasDemoData ? (
+            <Badge variant="attention">Dados demonstrativos</Badge>
+          ) : null}
+        </div>
       </header>
 
       {view.rows.length === 0 ? (

@@ -187,43 +187,43 @@ begin
   -- ---------------------------------------------------------------------------
   insert into assets (
     id, user_id, ticker, name, exchange, asset_type, asset_class,
-    country, currency, sector, risk_bucket, is_demo
+    country, currency, sector, risk_bucket, indexador, investment_style, is_demo
   )
   select md5(v_user::text || 'asset:' || a.tk)::uuid, v_user, a.tk, a.nm, a.exch,
          a.atype::asset_type, a.acls::asset_class, a.ctry, a.cur, a.sect,
-         a.bucket::risk_bucket, true
+         a.bucket::risk_bucket, a.idx::rate_index, a.style::investment_style, true
   from (values
     -- Renda Fixa Brasil
-    ('TESOURO_IPCA_2035','Tesouro IPCA+ 2035','N/A','TESOURO_DIRETO','RF_BRASIL','BR','BRL',null,'DEFENSIVE'),
-    ('TESOURO_SELIC_2029','Tesouro Selic 2029','N/A','TESOURO_DIRETO','RF_BRASIL','BR','BRL',null,'DEFENSIVE'),
-    ('CDB_BTG_110','CDB BTG 110% CDI','N/A','CDB','RF_BRASIL','BR','BRL',null,'DEFENSIVE'),
-    ('DEB_ENGIE_28','Debênture Incentivada Engie 2028','N/A','DEBENTURE','RF_BRASIL','BR','BRL','Energia','DEFENSIVE'),
-    ('CRI_HABITAT_30','CRI Habitat 2030','N/A','CRI','RF_BRASIL','BR','BRL','Imobiliário','DEFENSIVE'),
-    ('CRA_RAIZEN_29','CRA Raízen 2029','N/A','CRA','RF_BRASIL','BR','BRL','Consumo','DEFENSIVE'),
+    ('TESOURO_IPCA_2035','Tesouro IPCA+ 2035','N/A','TESOURO_DIRETO','RF_BRASIL','BR','BRL',null,'DEFENSIVE','IPCA','RENDA'),
+    ('TESOURO_SELIC_2029','Tesouro Selic 2029','N/A','TESOURO_DIRETO','RF_BRASIL','BR','BRL',null,'DEFENSIVE','SELIC','RENDA'),
+    ('CDB_BTG_110','CDB BTG 110% CDI','N/A','CDB','RF_BRASIL','BR','BRL',null,'DEFENSIVE','CDI','RENDA'),
+    ('DEB_ENGIE_28','Debênture Incentivada Engie 2028','N/A','DEBENTURE','RF_BRASIL','BR','BRL','Energia','DEFENSIVE','IPCA','RENDA'),
+    ('CRI_HABITAT_30','CRI Habitat 2030','N/A','CRI','RF_BRASIL','BR','BRL','Imobiliário','DEFENSIVE','IPCA','RENDA'),
+    ('CRA_RAIZEN_29','CRA Raízen 2029','N/A','CRA','RF_BRASIL','BR','BRL','Consumo','DEFENSIVE','CDI','RENDA'),
     -- Ações Brasil
-    ('ITUB4','Itaú Unibanco PN','B3','ACAO','ACOES_BRASIL','BR','BRL','Financeiro','CORE'),
-    ('PETR4','Petrobras PN','B3','ACAO','ACOES_BRASIL','BR','BRL','Energia','CORE'),
-    ('WEGE3','WEG ON','B3','ACAO','ACOES_BRASIL','BR','BRL','Industriais','CORE'),
-    ('VALE3','Vale ON','B3','ACAO','ACOES_BRASIL','BR','BRL','Materiais','CORE'),
-    ('TOTS3','Totvs ON','B3','ACAO','ACOES_BRASIL','BR','BRL','Tecnologia','GROWTH'),
+    ('ITUB4','Itaú Unibanco PN','B3','ACAO','ACOES_BRASIL','BR','BRL','Financeiro','CORE','NONE','VALUE'),
+    ('PETR4','Petrobras PN','B3','ACAO','ACOES_BRASIL','BR','BRL','Energia','CORE','NONE','VALUE'),
+    ('WEGE3','WEG ON','B3','ACAO','ACOES_BRASIL','BR','BRL','Industriais','CORE','NONE','QUALIDADE'),
+    ('VALE3','Vale ON','B3','ACAO','ACOES_BRASIL','BR','BRL','Materiais','CORE','NONE','VALUE'),
+    ('TOTS3','Totvs ON','B3','ACAO','ACOES_BRASIL','BR','BRL','Tecnologia','GROWTH','NONE','GROWTH'),
     -- Ações/ETFs Exterior
-    ('VOO','Vanguard S&P 500 ETF','ARCA','ETF','ACOES_ETF_EXTERIOR','US','USD',null,'CORE'),
-    ('GOOGL','Alphabet Inc. Class A','NASDAQ','ACAO','ACOES_ETF_EXTERIOR','US','USD','Tecnologia','CORE'),
-    ('MSFT','Microsoft Corporation','NASDAQ','ACAO','ACOES_ETF_EXTERIOR','US','USD','Tecnologia','CORE'),
-    ('BRK.B','Berkshire Hathaway Class B','NYSE','ACAO','ACOES_ETF_EXTERIOR','US','USD','Financeiro','CORE'),
-    ('VWO','Vanguard Emerging Markets ETF','ARCA','ETF','ACOES_ETF_EXTERIOR','CN','USD',null,'SATELLITE'),
-    ('NVDA','NVIDIA Corporation','NASDAQ','ACAO','ACOES_ETF_EXTERIOR','US','USD','Tecnologia','GROWTH'),
+    ('VOO','Vanguard S&P 500 ETF','ARCA','ETF','ACOES_ETF_EXTERIOR','US','USD',null,'CORE','NONE','INDICE'),
+    ('GOOGL','Alphabet Inc. Class A','NASDAQ','ACAO','ACOES_ETF_EXTERIOR','US','USD','Tecnologia','CORE','NONE','GROWTH'),
+    ('MSFT','Microsoft Corporation','NASDAQ','ACAO','ACOES_ETF_EXTERIOR','US','USD','Tecnologia','CORE','NONE','QUALIDADE'),
+    ('BRK.B','Berkshire Hathaway Class B','NYSE','ACAO','ACOES_ETF_EXTERIOR','US','USD','Financeiro','CORE','NONE','VALUE'),
+    ('VWO','Vanguard Emerging Markets ETF','ARCA','ETF','ACOES_ETF_EXTERIOR','CN','USD',null,'SATELLITE','NONE','INDICE'),
+    ('NVDA','NVIDIA Corporation','NASDAQ','ACAO','ACOES_ETF_EXTERIOR','US','USD','Tecnologia','GROWTH','NONE','GROWTH'),
     -- Renda Fixa / Caixa Exterior
-    ('SHY','iShares 1-3 Year Treasury Bond ETF','ARCA','ETF','RF_CAIXA_EXTERIOR','US','USD',null,'DEFENSIVE'),
-    ('CASH_USD','Caixa em dólar','N/A','CAIXA','RF_CAIXA_EXTERIOR','US','USD',null,'CASH'),
+    ('SHY','iShares 1-3 Year Treasury Bond ETF','ARCA','ETF','RF_CAIXA_EXTERIOR','US','USD',null,'DEFENSIVE','USD_FIXED','RENDA'),
+    ('CASH_USD','Caixa em dólar','N/A','CAIXA','RF_CAIXA_EXTERIOR','US','USD',null,'CASH','NONE','NAO_APLICAVEL'),
     -- FIIs
-    ('HGLG11','CSHG Logística FII','B3','FII','FII_IMOBILIARIO','BR','BRL','Imobiliário','CORE'),
-    ('KNRI11','Kinea Renda Imobiliária FII','B3','FII','FII_IMOBILIARIO','BR','BRL','Imobiliário','CORE'),
-    ('MXRF11','Maxi Renda FII','B3','FII','FII_IMOBILIARIO','BR','BRL','Imobiliário','CORE'),
-    ('XPML11','XP Malls FII','B3','FII','FII_IMOBILIARIO','BR','BRL','Imobiliário','CORE'),
+    ('HGLG11','CSHG Logística FII','B3','FII','FII_IMOBILIARIO','BR','BRL','Imobiliário','CORE','NONE','DIVIDENDOS'),
+    ('KNRI11','Kinea Renda Imobiliária FII','B3','FII','FII_IMOBILIARIO','BR','BRL','Imobiliário','CORE','NONE','DIVIDENDOS'),
+    ('MXRF11','Maxi Renda FII','B3','FII','FII_IMOBILIARIO','BR','BRL','Imobiliário','CORE','NONE','DIVIDENDOS'),
+    ('XPML11','XP Malls FII','B3','FII','FII_IMOBILIARIO','BR','BRL','Imobiliário','CORE','NONE','DIVIDENDOS'),
     -- Multimercados
-    ('FUNDO_VERDE','Verde AM Scorpion FIC FIM','N/A','FUNDO','MULTIMERCADO_ALTERNATIVO','BR','BRL',null,'SATELLITE')
-  ) as a(tk, nm, exch, atype, acls, ctry, cur, sect, bucket)
+    ('FUNDO_VERDE','Verde AM Scorpion FIC FIM','N/A','FUNDO','MULTIMERCADO_ALTERNATIVO','BR','BRL',null,'SATELLITE','NONE','NAO_APLICAVEL')
+  ) as a(tk, nm, exch, atype, acls, ctry, cur, sect, bucket, idx, style)
   on conflict (id) do update set
     asset_class = excluded.asset_class,
     risk_bucket = excluded.risk_bucket;

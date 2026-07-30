@@ -8,6 +8,10 @@ import {
 import { computeAllocation, type ClassAllocation } from "@/domain/allocation/gap";
 import { evaluateRiskLimits, type RiskAlert } from "@/domain/risk/limits";
 import { computeDimensionalExposure } from "@/domain/exposure/compute";
+import {
+  resolveCurrentPortfolio,
+  type SourceFreshness,
+} from "@/domain/positions/current";
 import type { DimensionExposure } from "@/domain/exposure/dimensions";
 import {
   computePeriodReturn,
@@ -39,7 +43,13 @@ export interface EvolutionPoint {
 
 export interface DashboardData {
   /** `null` quando não há nenhuma posição importada. */
+  /** Data mais recente entre as fontes. As fontes podem divergir. */
   readonly referenceDate: string | null;
+  /** Estado de atualização de cada conta/corretora. */
+  readonly sources: readonly SourceFreshness[];
+  /** True quando as fontes não estão todas na mesma data. */
+  readonly hasMixedDates: boolean;
+  readonly hasStaleSources: boolean;
   readonly isEmpty: boolean;
   readonly hasDemoData: boolean;
 
@@ -78,6 +88,9 @@ export interface DashboardData {
 
 const EMPTY: DashboardData = {
   referenceDate: null,
+  sources: [],
+  hasMixedDates: false,
+  hasStaleSources: false,
   isEmpty: true,
   hasDemoData: false,
   totalFinancialBRL: 0,
@@ -131,17 +144,20 @@ export async function getDashboardData(
     };
   }
 
-  const [positions, fx, targets, limits, overrides, assetTypes] =
+  const [allPositions, fx, targets, limits, overrides, classifications] =
     await Promise.all([
-      repo.getPositions(db, referenceDate),
+      repo.getAllPositions(db),
       repo.getFxTable(db, referenceDate),
       repo.getAllocationTargets(db),
       repo.getRiskLimits(db),
       repo.getExposureOverrides(db),
-      repo.getAssetTypes(db),
+      repo.getAssetClassifications(db),
     ]);
 
-  const exposures = consolidatePositions(positions, fx);
+  // Cada conta entra com a SUA data mais recente — corretoras fecham em dias
+  // diferentes, e um corte global descartaria contas atualizadas em outro dia.
+  const current = resolveCurrentPortfolio(allPositions, referenceDate, fx);
+  const exposures = consolidatePositions(current.positions, fx);
   const totalFinancialBRL = totalFinancialValueBRL(exposures);
 
   const byCountry = groupExposureBy(exposures, (e) => e.country);
@@ -157,7 +173,10 @@ export async function getDashboardData(
   const usd = byCurrency.find((slice) => slice.key === "USD")?.weight ?? 0;
 
   return {
-    referenceDate,
+    referenceDate: current.newestDate ?? referenceDate,
+    sources: current.sources,
+    hasMixedDates: current.hasMixedDates,
+    hasStaleSources: current.hasStaleSources,
     isEmpty: exposures.length === 0,
     hasDemoData: hasDemo,
 
@@ -178,7 +197,7 @@ export async function getDashboardData(
     byCurrency,
     bySector,
     byRiskBucket,
-    dimensions: computeDimensionalExposure(exposures, overrides, assetTypes),
+    dimensions: computeDimensionalExposure(exposures, overrides, classifications),
 
     alerts: evaluateRiskLimits(exposures, limits),
     evolution: buildEvolution(snapshots),

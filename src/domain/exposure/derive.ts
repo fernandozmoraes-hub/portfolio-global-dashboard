@@ -21,10 +21,17 @@ import type {
  * Regra central: **os pesos somam 1 DENTRO de cada dimensão**, e cada dimensão
  * é resolvida de forma totalmente independente das outras.
  *
- * Divisão dentro de uma dimensão só ocorre quando é economicamente real —
- * uma debênture incentivada é mesmo parte crédito e parte inflação. Nunca se
+ * Divisão dentro de uma dimensão só ocorre quando é economicamente real — um
+ * papel indexado ao IPCA carrega crédito e inflação no mesmo título. Nunca se
  * divide um ativo só para "fechar" a soma entre dimensões diferentes.
  */
+
+/** Indexador da remuneração. Espelha o ENUM rate_index (migration 0013). */
+export type RateIndex =
+  | "IPCA" | "IGPM" | "CDI" | "SELIC" | "PREFIXADO" | "USD_FIXED" | "NONE";
+
+/** Indexadores que expõem o papel à inflação brasileira. */
+const INFLATION_LINKED: ReadonlySet<RateIndex> = new Set(["IPCA", "IGPM"]);
 
 export interface AssetTags {
   readonly assetType: string;
@@ -32,7 +39,12 @@ export interface AssetTags {
   readonly country: string;
   readonly currency: Currency;
   readonly sector: string | null;
+  /** Dimensionamento da posição. NÃO é estilo. */
   readonly riskBucket: RiskBucket;
+  /** Estilo de investimento do ativo. NÃO é risk bucket. */
+  readonly investmentStyle: string;
+  /** Indexador da remuneração. Fonte ÚNICA do fator inflação. */
+  readonly indexador: RateIndex;
   readonly name: string;
 }
 
@@ -43,9 +55,17 @@ function w(tag: string, weight: number): DimensionWeight {
 const COMMODITY_SECTORS = new Set(["Energia", "Materiais", "Mineração", "Agro"]);
 const TECH_SECTORS = new Set(["Tecnologia", "Technology", "Semicondutores"]);
 
-function isIpcaLinked(name: string): boolean {
-  const n = name.toUpperCase();
-  return n.includes("IPCA") || n.includes("INCENTIVAD") || n.includes("INFLA");
+/**
+ * O papel está exposto à inflação brasileira?
+ *
+ * Decidido EXCLUSIVAMENTE pelo indexador. A heurística anterior olhava o nome
+ * e tratava "incentivada" como sinal de inflação — erro conceitual: incentivada
+ * é regime TRIBUTÁRIO (isenção de IR pela Lei 12.431), não indexação. Uma
+ * debênture incentivada CDI+ não carrega risco de inflação nenhum, e uma
+ * debênture comum IPCA+ carrega.
+ */
+function isInflationLinked(asset: AssetTags): boolean {
+  return INFLATION_LINKED.has(asset.indexador);
 }
 
 // ---------------------------------------------------------------------------
@@ -63,9 +83,44 @@ function deriveMoeda(asset: AssetTags): DimensionWeight[] {
 }
 
 // ---------------------------------------------------------------------------
-// ESTILO — papel da posição na carteira, vindo do risk bucket.
+// ESTILO — que tipo de retorno o ATIVO busca.
 // ---------------------------------------------------------------------------
 function deriveEstilo(asset: AssetTags): DimensionWeight[] {
+  if (asset.investmentStyle && asset.investmentStyle !== "NAO_APLICAVEL") {
+    return [w(asset.investmentStyle, 1)];
+  }
+
+  // Sem estilo declarado, infere pelo instrumento — nunca pelo risk bucket,
+  // que responde a outra pergunta.
+  switch (asset.assetType) {
+    case "ETF":
+      return [w("INDICE", 1)];
+    case "FII":
+    case "REIT":
+      return [w("DIVIDENDOS", 1)];
+    case "TESOURO_DIRETO":
+    case "CDB":
+    case "LCI_LCA":
+    case "DEBENTURE":
+    case "CRI":
+    case "CRA":
+    case "BOND":
+      return [w("RENDA", 1)];
+    case "ACAO":
+      return [w("BLEND", 1)];
+    default:
+      return [w("NAO_APLICAVEL", 1)];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// RISK_BUCKET — papel e limite de tamanho da posição.
+// ---------------------------------------------------------------------------
+// Dimensão própria, separada de ESTILO. Governa o teto individual: CORE 5%,
+// GROWTH 3%, ASYMMETRIC 0,5%. É decisão de dimensionamento do gestor, não
+// característica do ativo.
+// ---------------------------------------------------------------------------
+function deriveRiskBucket(asset: AssetTags): DimensionWeight[] {
   return [w(asset.riskBucket, 1)];
 }
 
@@ -136,8 +191,10 @@ function deriveSetorTema(asset: AssetTags): DimensionWeight[] {
 // ---------------------------------------------------------------------------
 // MACRO — a que choque macroeconômico a posição reage.
 // ---------------------------------------------------------------------------
-// Aqui a divisão dentro da dimensão é legítima: uma debênture IPCA+ carrega
-// mesmo dois riscos macro distintos no mesmo papel.
+// Aqui a divisão dentro da dimensão é legítima: um papel IPCA+ carrega mesmo
+// dois riscos macro distintos no mesmo título.
+//
+// A fatia de inflação vem SEMPRE do indexador, nunca do regime tributário.
 // ---------------------------------------------------------------------------
 function deriveMacro(asset: AssetTags): DimensionWeight[] {
   const sector = asset.sector ?? "";
@@ -149,24 +206,33 @@ function deriveMacro(asset: AssetTags): DimensionWeight[] {
       return [w("CAIXA", 1)];
 
     case "TESOURO_DIRETO":
-      return isIpcaLinked(asset.name)
+      // NTN-B carrega juros real + inflação; LFT e LTN, só juros.
+      return isInflationLinked(asset)
         ? [w("INFLACAO_BR", 0.7), w("JUROS_BR", 0.3)]
         : [w("JUROS_BR", 1)];
 
     case "CDB":
     case "LCI_LCA":
-      return [w("JUROS_BR", 0.85), w("CREDITO_BR", 0.15)];
+      return isInflationLinked(asset)
+        ? [w("INFLACAO_BR", 0.55), w("JUROS_BR", 0.3), w("CREDITO_BR", 0.15)]
+        : [w("JUROS_BR", 0.85), w("CREDITO_BR", 0.15)];
 
     case "DEBENTURE":
-      return isIpcaLinked(asset.name)
+      // O que decide a fatia de inflação é o INDEXADOR, não o regime
+      // tributário: uma incentivada CDI+ não tem exposição a inflação.
+      return isInflationLinked(asset)
         ? [w("CREDITO_BR", 0.55), w("INFLACAO_BR", 0.45)]
         : [w("CREDITO_BR", 0.6), w("JUROS_BR", 0.4)];
 
     case "CRI":
-      return [w("CREDITO_BR", 0.5), w("IMOBILIARIO", 0.3), w("INFLACAO_BR", 0.2)];
+      return isInflationLinked(asset)
+        ? [w("CREDITO_BR", 0.5), w("IMOBILIARIO", 0.3), w("INFLACAO_BR", 0.2)]
+        : [w("CREDITO_BR", 0.5), w("IMOBILIARIO", 0.3), w("JUROS_BR", 0.2)];
 
     case "CRA":
-      return [w("CREDITO_BR", 0.5), w("COMMODITIES", 0.3), w("INFLACAO_BR", 0.2)];
+      return isInflationLinked(asset)
+        ? [w("CREDITO_BR", 0.5), w("COMMODITIES", 0.3), w("INFLACAO_BR", 0.2)]
+        : [w("CREDITO_BR", 0.5), w("COMMODITIES", 0.3), w("JUROS_BR", 0.2)];
 
     case "ACAO": {
       const equity: MacroTag = isBrazil ? "EQUITY_BR" : "EQUITY_US";
@@ -179,9 +245,9 @@ function deriveMacro(asset: AssetTags): DimensionWeight[] {
       if (asset.assetClass === "RF_CAIXA_EXTERIOR") return [w("DURATION_USD", 1)];
       if (asset.country === "US") return [w("EQUITY_US", 1)];
       if (isBrazil) return [w("EQUITY_BR", 1)];
-      // Emergentes, Europa e Ásia agora têm fator próprio, em vez de
-      // desaparecer num residual.
-      return [w("EQUITY_GLOBAL", 1)];
+      // Emergentes e demais mercados fora de BR/US têm fator próprio, em vez
+      // de desaparecer num residual.
+      return [w("EQUITY_EMERGENTES", 1)];
     }
 
     case "FII":
@@ -210,6 +276,7 @@ const DERIVERS: Record<ExposureDimension, (asset: AssetTags) => DimensionWeight[
     MOEDA: deriveMoeda,
     SETOR_TEMA: deriveSetorTema,
     ESTILO: deriveEstilo,
+    RISK_BUCKET: deriveRiskBucket,
     MACRO: deriveMacro,
   };
 
@@ -246,7 +313,7 @@ export function resolveDimension(
   return deriveDimension(asset, dimension);
 }
 
-/** Rótulo legível para tags de CLASSE e ESTILO, que reusam enums existentes. */
+/** Rótulo para tags que reusam enums de shared/types. */
 export function labelForSharedTag(
   dimension: ExposureDimension,
   tag: string,
@@ -254,7 +321,7 @@ export function labelForSharedTag(
   if (dimension === "CLASSE") {
     return ASSET_CLASS_LABELS[tag as AssetClass] ?? null;
   }
-  if (dimension === "ESTILO") {
+  if (dimension === "RISK_BUCKET") {
     return RISK_BUCKET_LABELS[tag as RiskBucket] ?? null;
   }
   return null;

@@ -3,9 +3,15 @@ import {
   computeDimensionalExposure,
   computeSingleDimension,
   unclassifiedShare,
+  type AssetClassification,
   type OverrideMap,
 } from "@/domain/exposure/compute";
-import { deriveDimension, resolveDimension } from "@/domain/exposure/derive";
+import {
+  deriveDimension,
+  resolveDimension,
+  type AssetTags,
+  type RateIndex,
+} from "@/domain/exposure/derive";
 import {
   EXPOSURE_DIMENSIONS,
   type DimensionWeight,
@@ -52,15 +58,23 @@ const GOOGL = pos("googl", 100_000, {
   riskBucket: "CORE",
 });
 
-const TIPOS = new Map([["googl", "ACAO"]]);
+function cls(
+  assetType: string,
+  indexador: RateIndex = "NONE",
+  investmentStyle = "NAO_APLICAVEL",
+): AssetClassification {
+  return { assetType, indexador, investmentStyle };
+}
+
+const TIPOS = new Map([["googl", cls("ACAO")]]);
 
 describe("dimensões são independentes — sem rateio entre elas", () => {
   it("R$ 100 mil em GOOGL contam INTEGRAIS em cada dimensão", () => {
     const exposures = consolidatePositions([GOOGL], {});
     const dims = computeDimensionalExposure(exposures, new Map(), TIPOS);
 
-    // Seis dimensões, cada uma com R$ 100.000 — não R$ 100.000 divididos.
-    expect(dims).toHaveLength(6);
+    // Sete dimensões, cada uma com R$ 100.000 — não R$ 100.000 divididos.
+    expect(dims).toHaveLength(7);
     for (const dim of dims) {
       const soma = dim.buckets.reduce((acc, b) => acc + b.valueBRL, 0);
       expect(soma).toBeCloseTo(100_000, 2);
@@ -103,10 +117,10 @@ describe("dimensões são independentes — sem rateio entre elas", () => {
       exposures,
       new Map(),
       new Map([
-        ["a", "ACAO"],
-        ["b", "FII"],
-        ["c", "ACAO"],
-        ["d", "CDB"],
+        ["a", cls("ACAO")],
+        ["b", cls("FII")],
+        ["c", cls("ACAO")],
+        ["d", cls("CDB")],
       ]),
     );
 
@@ -147,19 +161,19 @@ describe("pesos somam 1 dentro de cada dimensão", () => {
   ];
 
   it.each(casos)("$assetType em todas as dimensões", ({ assetType, name }) => {
+    const asset: AssetTags = {
+      assetType,
+      assetClass: "RF_BRASIL",
+      country: "BR",
+      currency: "BRL",
+      sector: null,
+      riskBucket: "CORE",
+      investmentStyle: "NAO_APLICAVEL",
+      indexador: "NONE",
+      name,
+    };
     for (const dimension of EXPOSURE_DIMENSIONS) {
-      const weights = deriveDimension(
-        {
-          assetType,
-          assetClass: "RF_BRASIL",
-          country: "BR",
-          currency: "BRL",
-          sector: null,
-          riskBucket: "CORE",
-          name,
-        },
-        dimension,
-      );
+      const weights = deriveDimension(asset, dimension);
       const soma = weights.reduce((acc, item) => acc + item.weight, 0);
       expect(soma).toBeCloseTo(1, 5);
     }
@@ -176,7 +190,9 @@ describe("divisão dentro de uma dimensão só quando é economicamente real", (
         currency: "BRL",
         sector: "Energia",
         riskBucket: "DEFENSIVE",
-        name: "Debênture Incentivada Engie",
+        investmentStyle: "NAO_APLICAVEL",
+        indexador: "IPCA",
+        name: "Debênture Engie IPCA+",
       },
       "MACRO",
     );
@@ -194,7 +210,9 @@ describe("divisão dentro de uma dimensão só quando é economicamente real", (
         currency: "BRL",
         sector: "Energia",
         riskBucket: "DEFENSIVE",
-        name: "Debênture Incentivada Engie",
+        investmentStyle: "NAO_APLICAVEL",
+        indexador: "IPCA",
+        name: "Debênture Engie IPCA+",
       },
       "SETOR_TEMA",
     );
@@ -210,6 +228,8 @@ describe("divisão dentro de uma dimensão só quando é economicamente real", (
       currency: "BRL" as const,
       sector: "Energia",
       riskBucket: "CORE" as const,
+      investmentStyle: "NAO_APLICAVEL",
+      indexador: "NONE" as const,
       name: "Petrobras",
     };
 
@@ -220,7 +240,7 @@ describe("divisão dentro de uma dimensão só quando é economicamente real", (
   });
 });
 
-describe("equity global deixou de cair em residual", () => {
+describe("equity emergentes deixou de cair em residual", () => {
   it("ETF de emergentes tem fator macro próprio", () => {
     const macro = deriveDimension(
       {
@@ -230,12 +250,14 @@ describe("equity global deixou de cair em residual", () => {
         currency: "USD",
         sector: null,
         riskBucket: "SATELLITE",
+        investmentStyle: "INDICE",
+        indexador: "NONE",
         name: "Vanguard Emerging Markets",
       },
       "MACRO",
     );
 
-    expect(macro).toEqual([{ tag: "EQUITY_GLOBAL", weight: 1 }]);
+    expect(macro).toEqual([{ tag: "EQUITY_EMERGENTES", weight: 1 }]);
   });
 
   it("e aparece em GEOGRAFIA como China", () => {
@@ -247,6 +269,8 @@ describe("equity global deixou de cair em residual", () => {
         currency: "USD",
         sector: null,
         riskBucket: "SATELLITE",
+        investmentStyle: "INDICE",
+        indexador: "NONE",
         name: "Vanguard Emerging Markets",
       },
       "GEOGRAFIA",
@@ -261,7 +285,7 @@ describe("sobreposição manual é por dimensão", () => {
       [
         "googl",
         new Map<ExposureDimension, DimensionWeight[]>([
-          ["MACRO", [{ tag: "EQUITY_GLOBAL", weight: 1 }]],
+          ["MACRO", [{ tag: "EQUITY_EMERGENTES", weight: 1 }]],
         ]),
       ],
     ]);
@@ -273,7 +297,7 @@ describe("sobreposição manual é por dimensão", () => {
     const setor = dims.find((d) => d.dimension === "SETOR_TEMA")!;
 
     // MACRO foi sobreposto…
-    expect(macro.buckets[0]!.tag).toBe("EQUITY_GLOBAL");
+    expect(macro.buckets[0]!.tag).toBe("EQUITY_EMERGENTES");
     // …mas SETOR_TEMA continua derivado automaticamente
     expect(setor.buckets[0]!.tag).toBe("TECNOLOGIA_AI");
   });
@@ -287,6 +311,8 @@ describe("sobreposição manual é por dimensão", () => {
         currency: "BRL",
         sector: null,
         riskBucket: "SATELLITE",
+        investmentStyle: "NAO_APLICAVEL",
+        indexador: "NONE",
         name: "Fundo",
       },
       "MACRO",
@@ -341,8 +367,8 @@ describe("qualidade da classificação", () => {
       exposures,
       new Map(),
       new Map([
-        ["cdb", "CDB"],
-        ["acao", "ACAO"],
+        ["cdb", cls("CDB")],
+        ["acao", cls("ACAO")],
       ]),
       1_000_000,
     );
@@ -353,5 +379,128 @@ describe("qualidade da classificação", () => {
 
   it("carteira vazia não produz dimensões", () => {
     expect(computeDimensionalExposure([], new Map(), new Map())).toEqual([]);
+  });
+});
+
+describe("inflação vem do INDEXADOR, não do regime tributário", () => {
+  function rf(assetType: string, indexador: RateIndex, name: string): AssetTags {
+    return {
+      assetType,
+      assetClass: "RF_BRASIL",
+      country: "BR",
+      currency: "BRL",
+      sector: null,
+      riskBucket: "DEFENSIVE",
+      investmentStyle: "RENDA",
+      indexador,
+      name,
+    };
+  }
+
+  it("debênture INCENTIVADA em CDI NÃO carrega inflação", () => {
+    // "Incentivada" é isenção de IR (Lei 12.431), não indexação.
+    const macro = deriveDimension(
+      rf("DEBENTURE", "CDI", "Debênture Incentivada Engie"),
+      "MACRO",
+    );
+    expect(macro.map((m) => m.tag)).not.toContain("INFLACAO_BR");
+    expect(macro.map((m) => m.tag).sort()).toEqual(["CREDITO_BR", "JUROS_BR"]);
+  });
+
+  it("debênture COMUM em IPCA carrega inflação", () => {
+    const macro = deriveDimension(
+      rf("DEBENTURE", "IPCA", "Debênture Simples"),
+      "MACRO",
+    );
+    expect(macro.map((m) => m.tag)).toContain("INFLACAO_BR");
+  });
+
+  it("o nome do papel não influencia mais o resultado", () => {
+    const comNomeIncentivada = deriveDimension(
+      rf("DEBENTURE", "CDI", "Debênture Incentivada IPCA Inflação"),
+      "MACRO",
+    );
+    const comNomeNeutro = deriveDimension(
+      rf("DEBENTURE", "CDI", "XYZ"),
+      "MACRO",
+    );
+    expect(comNomeIncentivada).toEqual(comNomeNeutro);
+  });
+
+  it("IGPM também conta como inflação", () => {
+    expect(
+      deriveDimension(rf("CRI", "IGPM", "CRI"), "MACRO").map((m) => m.tag),
+    ).toContain("INFLACAO_BR");
+  });
+
+  it("Tesouro Selic e prefixado não carregam inflação", () => {
+    for (const idx of ["SELIC", "PREFIXADO", "CDI"] as RateIndex[]) {
+      const macro = deriveDimension(
+        rf("TESOURO_DIRETO", idx, "Tesouro"),
+        "MACRO",
+      );
+      expect(macro.map((m) => m.tag)).not.toContain("INFLACAO_BR");
+    }
+  });
+
+  it("Tesouro IPCA+ carrega inflação e juros real", () => {
+    const macro = deriveDimension(
+      rf("TESOURO_DIRETO", "IPCA", "Tesouro IPCA+ 2035"),
+      "MACRO",
+    );
+    expect(macro.map((m) => m.tag).sort()).toEqual(["INFLACAO_BR", "JUROS_BR"]);
+  });
+
+  it("CRI e CRA sem indexação inflacionária trocam inflação por juros", () => {
+    const cri = deriveDimension(rf("CRI", "CDI", "CRI"), "MACRO");
+    expect(cri.map((m) => m.tag)).toContain("JUROS_BR");
+    expect(cri.map((m) => m.tag)).not.toContain("INFLACAO_BR");
+  });
+});
+
+describe("estilo de investimento é separado de risk bucket", () => {
+  function asset(
+    riskBucket: AssetTags["riskBucket"],
+    investmentStyle: string,
+    assetType = "ACAO",
+  ): AssetTags {
+    return {
+      assetType,
+      assetClass: "ACOES_BRASIL",
+      country: "BR",
+      currency: "BRL",
+      sector: null,
+      riskBucket,
+      investmentStyle,
+      indexador: "NONE",
+      name: "Ativo",
+    };
+  }
+
+  it("são dimensões distintas com respostas distintas", () => {
+    const a = asset("CORE", "GROWTH");
+    expect(deriveDimension(a, "RISK_BUCKET")).toEqual([{ tag: "CORE", weight: 1 }]);
+    expect(deriveDimension(a, "ESTILO")).toEqual([{ tag: "GROWTH", weight: 1 }]);
+  });
+
+  it("GROWTH em risk bucket não implica GROWTH em estilo", () => {
+    const a = asset("GROWTH", "VALUE");
+    expect(deriveDimension(a, "RISK_BUCKET")[0]!.tag).toBe("GROWTH");
+    expect(deriveDimension(a, "ESTILO")[0]!.tag).toBe("VALUE");
+  });
+
+  it("um ETF pode ser INDICE em estilo e CORE em risk bucket", () => {
+    const a = asset("CORE", "NAO_APLICAVEL", "ETF");
+    expect(deriveDimension(a, "ESTILO")).toEqual([{ tag: "INDICE", weight: 1 }]);
+    expect(deriveDimension(a, "RISK_BUCKET")).toEqual([{ tag: "CORE", weight: 1 }]);
+  });
+
+  it("sem estilo declarado, infere pelo instrumento e nunca pelo bucket", () => {
+    expect(deriveDimension(asset("ASYMMETRIC", "", "FII"), "ESTILO")).toEqual([
+      { tag: "DIVIDENDOS", weight: 1 },
+    ]);
+    expect(deriveDimension(asset("GROWTH", "", "CDB"), "ESTILO")).toEqual([
+      { tag: "RENDA", weight: 1 },
+    ]);
   });
 });

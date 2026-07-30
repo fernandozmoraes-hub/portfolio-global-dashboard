@@ -1,7 +1,12 @@
 import { round2, round4 } from "@/domain/money/types";
 import type { AssetExposure } from "@/domain/consolidation/consolidate";
 import { totalFinancialValueBRL } from "@/domain/consolidation/consolidate";
-import { resolveDimension, labelForSharedTag, type AssetTags } from "./derive";
+import {
+  resolveDimension,
+  labelForSharedTag,
+  type AssetTags,
+  type RateIndex,
+} from "./derive";
 import {
   EXPOSURE_DIMENSIONS,
   DIMENSION_LABELS,
@@ -31,16 +36,23 @@ export type OverrideMap = ReadonlyMap<
   ReadonlyMap<ExposureDimension, readonly DimensionWeight[]>
 >;
 
+/** Atributos de classificação que não viajam na exposição consolidada. */
+export interface AssetClassification {
+  readonly assetType: string;
+  readonly indexador: RateIndex;
+  readonly investmentStyle: string;
+}
+
 export function computeDimensionalExposure(
   exposures: readonly AssetExposure[],
   overrides: OverrideMap = new Map(),
-  assetTypeById: ReadonlyMap<string, string> = new Map(),
+  classificationById: ReadonlyMap<string, AssetClassification> = new Map(),
 ): DimensionExposure[] {
   const totalBRL = totalFinancialValueBRL(exposures);
   if (totalBRL === 0 || exposures.length === 0) return [];
 
   return EXPOSURE_DIMENSIONS.map((dimension) =>
-    computeSingleDimension(dimension, exposures, overrides, assetTypeById, totalBRL),
+    computeSingleDimension(dimension, exposures, overrides, classificationById, totalBRL),
   );
 }
 
@@ -49,7 +61,7 @@ export function computeSingleDimension(
   dimension: ExposureDimension,
   exposures: readonly AssetExposure[],
   overrides: OverrideMap,
-  assetTypeById: ReadonlyMap<string, string>,
+  classificationById: ReadonlyMap<string, AssetClassification>,
   totalBRL: number,
 ): DimensionExposure {
   const valueByTag = new Map<string, number>();
@@ -57,7 +69,7 @@ export function computeSingleDimension(
 
   for (const exposure of exposures) {
     const tags = resolveDimension(
-      toAssetTags(exposure, assetTypeById),
+      toAssetTags(exposure, classificationById),
       dimension,
       overrides.get(exposure.assetId)?.get(dimension),
     );
@@ -95,15 +107,18 @@ export function computeSingleDimension(
 
 function toAssetTags(
   exposure: AssetExposure,
-  assetTypeById: ReadonlyMap<string, string>,
+  classificationById: ReadonlyMap<string, AssetClassification>,
 ): AssetTags {
+  const classification = classificationById.get(exposure.assetId);
   return {
-    assetType: assetTypeById.get(exposure.assetId) ?? fallbackType(exposure.assetClass),
+    assetType: classification?.assetType ?? fallbackType(exposure.assetClass),
     assetClass: exposure.assetClass,
     country: exposure.country,
     currency: exposure.currency,
     sector: exposure.sector,
     riskBucket: exposure.riskBucket,
+    investmentStyle: classification?.investmentStyle ?? "NAO_APLICAVEL",
+    indexador: classification?.indexador ?? "NONE",
     name: exposure.assetName,
   };
 }

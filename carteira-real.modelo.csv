@@ -1,5 +1,8 @@
-broker,account,ticker,asset_name,exchange,asset_type,asset_class,country,currency,sector,risk_bucket,quantity,average_cost,current_price,reference_date
-XP Investimentos,XP - Conta Principal,ITUB4,Itaú Unibanco PN,B3,ACAO,ACOES_BRASIL,BR,BRL,Financeiro,CORE,1000,28.40,34.50,2026-07-31
-XP Investimentos,XP - Conta Principal,TESOURO_IPCA_2035,Tesouro IPCA+ 2035,N/A,TESOURO_DIRETO,RF_BRASIL,BR,BRL,,DEFENSIVE,30,3750.00,4000.00,2026-07-31
-Avenue,Avenue - Conta USD,GOOGL,Alphabet Inc. Class A,NASDAQ,ACAO,ACOES_ETF_EXTERIOR,US,USD,Tecnologia,CORE,22.4,141.80,178.50,2026-07-31
-Interactive Brokers,IBKR - Conta USD,GOOGL,Alphabet Inc. Class A,NASDAQ,ACAO,ACOES_ETF_EXTERIOR,US,USD,Tecnologia,CORE,19.6,152.40,178.50,2026-07-31
+broker,account,ticker,asset_name,exchange,asset_type,asset_class,country,currency,sector,risk_bucket,investment_style,indexador,quantity,average_cost,current_price,reference_date
+XP Investimentos,XP - Conta Principal,TESOURO_IPCA_2035,Tesouro IPCA+ 2035,N/A,TESOURO_DIRETO,RF_BRASIL,BR,BRL,,DEFENSIVE,RENDA,IPCA,30,3750.00,4000.00,2026-07-31
+XP Investimentos,XP - Conta Principal,CDB_XP_110,CDB XP 110% CDI,N/A,CDB,RF_BRASIL,BR,BRL,,DEFENSIVE,RENDA,CDI,50000,1.00,1.00,2026-07-31
+XP Investimentos,XP - Conta Principal,ITUB4,Itaú Unibanco PN,B3,ACAO,ACOES_BRASIL,BR,BRL,Financeiro,CORE,VALUE,NONE,1000,28.40,34.50,2026-07-31
+XP Investimentos,XP - Conta Principal,HGLG11,CSHG Logística FII,B3,FII,FII_IMOBILIARIO,BR,BRL,Imobiliário,CORE,DIVIDENDOS,NONE,250,152.30,160.00,2026-07-31
+Avenue,Avenue - Conta USD,GOOGL,Alphabet Inc. Class A,NASDAQ,ACAO,ACOES_ETF_EXTERIOR,US,USD,Tecnologia,CORE,GROWTH,NONE,22.4,141.80,178.50,2026-07-31
+Interactive Brokers,IBKR - Conta USD,GOOGL,Alphabet Inc. Class A,NASDAQ,ACAO,ACOES_ETF_EXTERIOR,US,USD,Tecnologia,CORE,GROWTH,NONE,19.6,152.40,178.50,2026-07-28
+Interactive Brokers,IBKR - Conta USD,VOO,Vanguard S&P 500 ETF,ARCA,ETF,ACOES_ETF_EXTERIOR,US,USD,,CORE,INDICE,NONE,22,472.30,545.00,2026-07-28

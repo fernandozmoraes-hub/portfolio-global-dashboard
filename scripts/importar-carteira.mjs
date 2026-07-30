@@ -38,6 +38,8 @@ const COLUNAS = [
   "currency",
   "sector",
   "risk_bucket",
+  "investment_style",
+  "indexador",
   "quantity",
   "average_cost",
   "current_price",
@@ -61,6 +63,13 @@ const OBRIGATORIAS = [
 const ASSET_CLASSES = new Set([
   "RF_BRASIL", "ACOES_BRASIL", "ACOES_ETF_EXTERIOR", "RF_CAIXA_EXTERIOR",
   "FII_IMOBILIARIO", "MULTIMERCADO_ALTERNATIVO", "CAIXA_BR",
+]);
+const RATE_INDEXES = new Set([
+  "IPCA", "IGPM", "CDI", "SELIC", "PREFIXADO", "USD_FIXED", "NONE",
+]);
+const STYLES = new Set([
+  "VALUE", "GROWTH", "BLEND", "QUALIDADE", "DIVIDENDOS", "INDICE", "RENDA",
+  "NAO_APLICAVEL",
 ]);
 const ASSET_TYPES = new Set([
   "ACAO", "ETF", "FII", "TESOURO_DIRETO", "CDB", "LCI_LCA", "DEBENTURE",
@@ -148,6 +157,19 @@ function validar(registros) {
       erros.push(`linha ${linha}: risk_bucket inválido — "${r.risk_bucket}"`);
     if (r.currency && !CURRENCIES.has(r.currency))
       erros.push(`linha ${linha}: moeda não suportada — "${r.currency}"`);
+    if (r.indexador && !RATE_INDEXES.has(r.indexador))
+      erros.push(`linha ${linha}: indexador inválido — "${r.indexador}"`);
+    if (r.investment_style && !STYLES.has(r.investment_style))
+      erros.push(`linha ${linha}: estilo inválido — "${r.investment_style}"`);
+
+    // O indexador decide o fator inflação. Sem ele, renda fixa fica sem
+    // exposição a inflação — o que pode estar errado e passa despercebido.
+    const rendaFixa = ["TESOURO_DIRETO", "CDB", "LCI_LCA", "DEBENTURE", "CRI", "CRA"];
+    if (rendaFixa.includes(r.asset_type) && (!r.indexador || r.indexador === "NONE")) {
+      avisos.push(
+        `linha ${linha}: ${r.ticker} é renda fixa sem indexador — ficará sem fator de inflação`,
+      );
+    }
 
     const qtd = numero(r.quantity);
     if (qtd === null) erros.push(`linha ${linha}: quantidade não numérica — "${r.quantity}"`);
@@ -194,7 +216,12 @@ function gerarSQL(registros, opcoes) {
       ]),
     ).values(),
   ];
-  const dataRef = registros[0].reference_date.trim();
+  // Com fontes em datas diferentes, o câmbio é ancorado na MAIS RECENTE —
+  // é a data que a carteira corrente exibe como referência.
+  const dataRef = registros
+    .map((r) => r.reference_date.trim())
+    .sort()
+    .at(-1);
 
   const out = [];
   out.push(`-- Carga da CARTEIRA REAL gerada por scripts/importar-carteira.mjs`);
@@ -240,9 +267,9 @@ function gerarSQL(registros, opcoes) {
   // Ativos — is_demo FALSE: carteira real
   for (const a of ativos) {
     const chave = `${a.ticker}|${a.exchange || "N/A"}|${a.currency}`;
-    out.push(`  insert into assets (id, user_id, ticker, name, exchange, asset_type, asset_class, country, currency, sector, risk_bucket, is_demo)`);
-    out.push(`  values (md5(v_user::text||'asset:${chave}')::uuid, v_user, ${q(a.ticker)}, ${q(a.asset_name)}, ${q(a.exchange || "N/A")}, '${a.asset_type || "ACAO"}', '${a.asset_class}', ${q(a.country)}, '${a.currency}', ${q(a.sector)}, '${a.risk_bucket}', false)`);
-    out.push(`  on conflict (id) do update set asset_class = excluded.asset_class, risk_bucket = excluded.risk_bucket, sector = excluded.sector;`);
+    out.push(`  insert into assets (id, user_id, ticker, name, exchange, asset_type, asset_class, country, currency, sector, risk_bucket, investment_style, indexador, is_demo)`);
+    out.push(`  values (md5(v_user::text||'asset:${chave}')::uuid, v_user, ${q(a.ticker)}, ${q(a.asset_name)}, ${q(a.exchange || "N/A")}, '${a.asset_type || "ACAO"}', '${a.asset_class}', ${q(a.country)}, '${a.currency}', ${q(a.sector)}, '${a.risk_bucket}', '${a.investment_style || "NAO_APLICAVEL"}', '${a.indexador || "NONE"}', false)`);
+    out.push(`  on conflict (id) do update set asset_class = excluded.asset_class, risk_bucket = excluded.risk_bucket, sector = excluded.sector, investment_style = excluded.investment_style, indexador = excluded.indexador;`);
   }
   out.push("");
 

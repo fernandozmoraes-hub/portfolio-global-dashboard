@@ -34,7 +34,7 @@ GOOGL a R$ 100 mil aparece como:
 Seis leituras do **mesmo** dinheiro, cada uma respondendo a uma pergunta
 diferente. Nenhuma divisão artificial.
 
-## As seis dimensões
+## As sete dimensões
 
 | Dimensão | Pergunta que responde | Origem |
 |---|---|---|
@@ -42,8 +42,19 @@ diferente. Nenhuma divisão artificial.
 | `GEOGRAFIA` | A que economia está exposto? | `country` |
 | `MOEDA` | Em que moeda está denominado? | `currency` |
 | `SETOR_TEMA` | A que setor ou tema está exposto? | `sector` + tipo |
-| `ESTILO` | Que papel cumpre na carteira? | `risk_bucket` |
-| `MACRO` | A que choque macro reage? | tipo + classe + setor |
+| `ESTILO` | Que tipo de retorno o ativo busca? | `investment_style` |
+| `RISK_BUCKET` | Que papel cumpre e quanto pode pesar? | `risk_bucket` |
+| `MACRO` | A que choque macro reage? | tipo + classe + `indexador` |
+
+### Estilo ≠ risk bucket
+
+Eram a mesma dimensão e não deviam ser. `risk_bucket` é decisão de
+**dimensionamento** (CORE pode pesar 5%, GROWTH 3%, ASYMMETRIC 0,5%);
+estilo é característica do **ativo** (value, growth, dividendos, índice).
+
+O termo "growth" existia nos dois com sentidos diferentes. Um ETF de índice
+pode ser `ESTILO=INDICE` e `RISK_BUCKET=CORE` simultaneamente — e uma ação
+growth pode ser dimensionada como CORE se o gestor assim decidir.
 
 **Tecnologia/AI vive em `SETOR_TEMA`, não em `MACRO`** — e é justamente essa
 separação que impede GOOGL de ser rateado entre "Equity EUA" e "Tecnologia".
@@ -55,9 +66,11 @@ carrega dois riscos que não se separam:
 
 | Ativo | Dimensão MACRO |
 |---|---|
-| Tesouro IPCA+ | Inflação BR 70% · Juros BR 30% |
-| CDB | Juros BR 85% · Crédito BR 15% |
-| Debênture incentivada | Crédito BR 55% · Inflação BR 45% |
+| Tesouro **IPCA** | Inflação BR 70% · Juros BR 30% |
+| Tesouro **Selic/prefixado** | Juros BR 100% |
+| CDB **CDI** | Juros BR 85% · Crédito BR 15% |
+| Debênture **IPCA** | Crédito BR 55% · Inflação BR 45% |
+| Debênture **CDI** | Crédito BR 60% · Juros BR 40% |
 | CRI | Crédito BR 50% · Imobiliário 30% · Inflação BR 20% |
 | CRA | Crédito BR 50% · Commodities 30% · Inflação BR 20% |
 | Petrobras / Vale | Equity BR 60% · Commodities 40% |
@@ -66,6 +79,16 @@ carrega dois riscos que não se separam:
 
 A mesma debênture é **100% Energia** em `SETOR_TEMA` e **100% Brasil** em
 `GEOGRAFIA`. A divisão de MACRO não contamina as outras dimensões.
+
+### O fator inflação vem do INDEXADOR
+
+Antes, qualquer papel cujo nome contivesse "incentivada" recebia o fator
+inflação. Isso confunde duas coisas: **incentivada é regime tributário**
+(isenção de IR, Lei 12.431) e nada diz sobre indexação.
+
+Uma debênture incentivada **CDI+** não carrega risco de inflação nenhum; uma
+debênture comum **IPCA+** carrega. Agora só `indexador ∈ {IPCA, IGPM}` gera o
+fator, e o nome do papel é irrelevante para o cálculo.
 
 ## Derivação automática e sobreposição
 
@@ -79,6 +102,11 @@ renormalizados para somar 1 dentro da dimensão.
 
 O campo `tag` é texto validado no domínio, não ENUM — acrescentar um tema novo
 (`DEFESA`, `BIOTECH`) não exige migration.
+
+## Equity emergentes
+
+O fator antes chamado `EQUITY_GLOBAL` passou a `EQUITY_EMERGENTES`, que é o que
+ele de fato representa: equity de mercados emergentes fora de Brasil e EUA.
 
 ## Congelamento histórico
 

@@ -1,6 +1,6 @@
 # Modelo de dados
 
-24 tabelas, todas com UUID, `user_id` e RLS. Migrations em
+24 tabelas e 1 view, todas com UUID, `user_id` e RLS. Migrations em
 `supabase/migrations/`, aplicadas em ordem numérica.
 
 ## Mapa
@@ -152,6 +152,25 @@ ENUM, para que um tema novo não exija migration.
 
 `snapshot_dimension_exposures` congela a exposição no fechamento.
 Ver [`EXPOSICAO.md`](EXPOSICAO.md).
+
+### Posição corrente vs NAV de fechamento (migration 0013)
+
+São semânticas diferentes e confundi-las produz números errados.
+
+**Posição corrente**: cada corretora fecha em datas diferentes. A carteira é
+montada com a última data **de cada conta** — um corte global descartaria
+contas atualizadas em outro dia. A view `account_position_freshness` expõe a
+data de cada fonte para que a UI mostre a defasagem em vez de escondê-la.
+
+**NAV de fechamento**: exige consistência temporal. Todas as quantidades são
+reprecificadas para **uma** data e **um** câmbio. Ativo sem preço na data não
+vira zero — bloqueia o fechamento.
+
+### Indexador e estilo (migration 0013)
+
+`assets.indexador` é a fonte única do fator inflação: "incentivada" é regime
+tributário, não indexação. `assets.investment_style` separa o estilo do ativo
+do `risk_bucket`, que dimensiona a posição.
 
 ### Imutabilidade (migration 0009)
 
