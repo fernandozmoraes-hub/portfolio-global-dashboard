@@ -310,9 +310,12 @@ begin
   insert into portfolio_cash_flows (
     id, user_id, date, flow_type, amount, currency, fx_rate_used, notes
   )
+  -- Datas REAIS de aporte (dia 10 de cada mês), não o último dia do período.
+  -- O Modified Dietz pondera cada fluxo pelo tempo em que ficou investido:
+  -- um aporte no dia 10 de um período de 30 dias pesa 2/3, não 0,5.
   select md5(v_user::text || 'flow:' || f.dt)::uuid, v_user, f.dt::date,
          'CONTRIBUTION'::cash_flow_type, 10000.00, 'BRL', 1, 'Aporte mensal (demo)'
-  from (values ('2026-04-30'), ('2026-05-29'), ('2026-06-30')) as f(dt)
+  from (values ('2026-04-10'), ('2026-05-11'), ('2026-06-10')) as f(dt)
   on conflict (id) do nothing;
 
   -- ---------------------------------------------------------------------------
