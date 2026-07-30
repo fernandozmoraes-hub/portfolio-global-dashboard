@@ -155,6 +155,46 @@ export function modifiedDietzFromNetFlow(params: {
   };
 }
 
+/** Como o retorno do período foi apurado. A UI precisa dizer isso ao usuário. */
+export type ReturnMethod = "DIETZ_DATADO" | "DIETZ_MEIO_PERIODO";
+
+export interface PeriodReturnResult extends PeriodReturn {
+  readonly method: ReturnMethod;
+}
+
+/**
+ * Apura o retorno do período preferindo SEMPRE os fluxos datados.
+ *
+ * Regra: se existe ao menos um fluxo com data real no período, o Modified
+ * Dietz pondera cada um pelo tempo em que ficou investido. O peso fixo de 0,5
+ * é fallback exclusivo para o caso em que só se conhece o agregado do mês —
+ * e, quando usado, a UI é obrigada a informá-lo.
+ *
+ * @param netFlowFallback fluxo líquido agregado, usado só na ausência de datas
+ */
+export function computePeriodReturn(
+  period: PeriodInput,
+  netFlowFallback: number,
+): PeriodReturnResult | null {
+  if (period.flows.length > 0) {
+    const result = modifiedDietz(period);
+    if (result === null) return null;
+    return {
+      ...result,
+      method: result.usedDatedFlows ? "DIETZ_DATADO" : "DIETZ_MEIO_PERIODO",
+    };
+  }
+
+  const fallback = modifiedDietzFromNetFlow({
+    startValue: period.startValue,
+    endValue: period.endValue,
+    netFlowBRL: netFlowFallback,
+  });
+
+  if (fallback === null) return null;
+  return { ...fallback, method: "DIETZ_MEIO_PERIODO" };
+}
+
 /**
  * Encadeamento geométrico de retornos mensais — o TWR do MVP.
  *
