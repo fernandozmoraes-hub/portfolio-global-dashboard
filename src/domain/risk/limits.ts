@@ -1,0 +1,195 @@
+import type {
+  PolicySeverity,
+  RiskBucket,
+  RiskLimitScope,
+} from "@/domain/shared/types";
+import { round2, round4 } from "@/domain/money/types";
+import type { AssetExposure } from "@/domain/consolidation/consolidate";
+import {
+  groupExposureBy,
+  totalFinancialValueBRL,
+} from "@/domain/consolidation/consolidate";
+
+/**
+ * LIMITES DE RISCO
+ * =================
+ *
+ * Todos os limites são avaliados sobre a EXPOSIÇÃO CONSOLIDADA. Um ativo a 3%
+ * na Avenue e 3% em outra corretora soma 6% e viola o teto de 5% de uma ação
+ * core — é exatamente esse o caso que o sistema existe para detectar.
+ *
+ * Nenhum limite é hardcoded: todos vêm da tabela `risk_limits`, editável pelo
+ * gestor. Os valores iniciais do seed refletem a política descrita no briefing.
+ */
+
+export interface RiskLimit {
+  readonly scope: RiskLimitScope;
+  /** Chave do escopo: bucket, setor, país ou moeda. `null` = vale para todos. */
+  readonly scopeKey: string | null;
+  /** Teto em % da carteira global (0-100). */
+  readonly maxPercentage: number;
+}
+
+export interface RiskAlert {
+  readonly scope: RiskLimitScope;
+  readonly scopeKey: string;
+  /** Identificação legível do que violou. */
+  readonly subject: string;
+  readonly currentPercentage: number;
+  readonly maxPercentage: number;
+  /** Excesso em pontos percentuais. */
+  readonly excessPercentagePoints: number;
+  /** Quanto reduzir em R$ para voltar ao limite. */
+  readonly excessBRL: number;
+  readonly severity: PolicySeverity;
+}
+
+/** Fração do limite a partir da qual o alerta fica amarelo. */
+const ATTENTION_THRESHOLD = 0.9;
+
+function severityFor(current: number, max: number): PolicySeverity | null {
+  if (max <= 0) return current > 0 ? "VIOLACAO" : null;
+  if (current > max) return "VIOLACAO";
+  if (current >= max * ATTENTION_THRESHOLD) return "ATENCAO";
+  return null;
+}
+
+/**
+ * Avalia todos os limites configurados contra a carteira consolidada.
+ * Retorna apenas o que merece atenção, ordenado por gravidade.
+ */
+export function evaluateRiskLimits(
+  exposures: readonly AssetExposure[],
+  limits: readonly RiskLimit[],
+): RiskAlert[] {
+  const totalBRL = totalFinancialValueBRL(exposures);
+  if (totalBRL === 0) return [];
+
+  const alerts: RiskAlert[] = [];
+
+  for (const limit of limits) {
+    switch (limit.scope) {
+      case "SINGLE_ASSET":
+        alerts.push(...checkSingleAsset(exposures, totalBRL, limit));
+        break;
+      case "RISK_BUCKET":
+        alerts.push(...checkBucketAggregate(exposures, totalBRL, limit));
+        break;
+      case "SECTOR":
+        alerts.push(
+          ...checkDimension(exposures, totalBRL, limit, (e) => e.sector ?? "Não classificado"),
+        );
+        break;
+      case "COUNTRY":
+        alerts.push(...checkDimension(exposures, totalBRL, limit, (e) => e.country));
+        break;
+      case "CURRENCY":
+        alerts.push(...checkDimension(exposures, totalBRL, limit, (e) => e.currency));
+        break;
+    }
+  }
+
+  const rank: Record<PolicySeverity, number> = { VIOLACAO: 0, ATENCAO: 1, OK: 2 };
+  return alerts.sort((a, b) => {
+    if (a.severity !== b.severity) return rank[a.severity] - rank[b.severity];
+    return b.excessPercentagePoints - a.excessPercentagePoints;
+  });
+}
+
+/**
+ * Teto por ativo individual, aplicado conforme o risk_bucket.
+ * `scopeKey` nulo aplica o teto a todos os ativos.
+ */
+function checkSingleAsset(
+  exposures: readonly AssetExposure[],
+  totalBRL: number,
+  limit: RiskLimit,
+): RiskAlert[] {
+  const alerts: RiskAlert[] = [];
+
+  for (const exposure of exposures) {
+    if (limit.scopeKey !== null && exposure.riskBucket !== limit.scopeKey) {
+      continue;
+    }
+
+    const current = round4((exposure.valueBRL / totalBRL) * 100);
+    const severity = severityFor(current, limit.maxPercentage);
+    if (severity === null) continue;
+
+    alerts.push({
+      scope: "SINGLE_ASSET",
+      scopeKey: limit.scopeKey ?? exposure.riskBucket,
+      subject: exposure.ticker,
+      currentPercentage: current,
+      maxPercentage: limit.maxPercentage,
+      excessPercentagePoints: round4(current - limit.maxPercentage),
+      excessBRL: round2(
+        exposure.valueBRL - (totalBRL * limit.maxPercentage) / 100,
+      ),
+      severity,
+    });
+  }
+
+  return alerts;
+}
+
+/** Teto para a soma de todos os ativos de um mesmo bucket. */
+function checkBucketAggregate(
+  exposures: readonly AssetExposure[],
+  totalBRL: number,
+  limit: RiskLimit,
+): RiskAlert[] {
+  const groups = groupExposureBy<RiskBucket>(exposures, (e) => e.riskBucket);
+  const alerts: RiskAlert[] = [];
+
+  for (const group of groups) {
+    if (limit.scopeKey !== null && group.key !== limit.scopeKey) continue;
+
+    const severity = severityFor(group.weight, limit.maxPercentage);
+    if (severity === null) continue;
+
+    alerts.push({
+      scope: "RISK_BUCKET",
+      scopeKey: group.key,
+      subject: `Bucket ${group.key}`,
+      currentPercentage: group.weight,
+      maxPercentage: limit.maxPercentage,
+      excessPercentagePoints: round4(group.weight - limit.maxPercentage),
+      excessBRL: round2(group.valueBRL - (totalBRL * limit.maxPercentage) / 100),
+      severity,
+    });
+  }
+
+  return alerts;
+}
+
+/** Concentração por setor, país ou moeda. */
+function checkDimension(
+  exposures: readonly AssetExposure[],
+  totalBRL: number,
+  limit: RiskLimit,
+  keyOf: (exposure: AssetExposure) => string,
+): RiskAlert[] {
+  const groups = groupExposureBy(exposures, keyOf);
+  const alerts: RiskAlert[] = [];
+
+  for (const group of groups) {
+    if (limit.scopeKey !== null && group.key !== limit.scopeKey) continue;
+
+    const severity = severityFor(group.weight, limit.maxPercentage);
+    if (severity === null) continue;
+
+    alerts.push({
+      scope: limit.scope,
+      scopeKey: group.key,
+      subject: group.key,
+      currentPercentage: group.weight,
+      maxPercentage: limit.maxPercentage,
+      excessPercentagePoints: round4(group.weight - limit.maxPercentage),
+      excessBRL: round2(group.valueBRL - (totalBRL * limit.maxPercentage) / 100),
+      severity,
+    });
+  }
+
+  return alerts;
+}
