@@ -84,28 +84,36 @@ Com **dois** fechamentos consecutivos, o retorno do mês sai por Modified Dietz:
 R = (V₁ − V₀ − F) / (V₀ + Σ wᵢ·Fᵢ)
 ```
 
-Exemplo com os dados do seed:
+onde wᵢ é a fração do período em que o fluxo i ficou investido.
+
+Exemplo com os dados do seed — aporte no **dia 10** de um período de 30 dias:
 
 ```
 maio/2026   V₀ = R$ 1.020.000
 junho/2026  V₁ = R$ 1.045.000
-aporte       F = R$ 10.000
+aporte       F = R$ 10.000 em 10/06/2026
 
-ganho de mercado = 1.045.000 − 1.020.000 − 10.000 = R$ 15.000
-capital médio    = 1.020.000 + 0,5 × 10.000       = R$ 1.025.000
-retorno do mês   = 15.000 / 1.025.000              = 1,4634%
+peso do fluxo    = (30 − 10) / 30                  = 0,6667
+ganho de mercado = 1.045.000 − 1.020.000 − 10.000  = R$ 15.000
+capital médio    = 1.020.000 + 0,6667 × 10.000     = R$ 1.026.667
+retorno do mês   = 15.000 / 1.026.667               = 1,4610%
 ```
 
 O aporte de R$ 10.000 **não** entra como rentabilidade.
 
-### Premissa do MVP
+### Ponderação temporal real
 
-Havendo apenas o aporte líquido agregado do mês, assume-se timing no meio do
-período (peso 0,5). A interface exibe essa premissa em tooltip.
+O sistema usa **sempre** a data real de cada fluxo registrado em
+`portfolio_cash_flows`. Um aporte feito no dia 5 e outro no dia 25 recebem
+pesos diferentes, porque ficaram investidos por prazos diferentes.
 
-Quando `portfolio_cash_flows` for populado com as datas reais dos aportes, o
-mesmo cálculo passa a usar os pesos corretos — sem mudança de interface. XIRR
-virá depois, sobre a mesma fonte.
+O peso fixo de meio de período (0,5) é **fallback exclusivo** para o caso em que
+só existe o agregado do mês, sem nenhum fluxo datado. Quando isso acontece, o
+card do Dashboard informa: *"fluxo agregado, timing no meio do mês"*. Com datas
+reais, informa *"Modified Dietz com datas reais dos aportes"*.
+
+`computePeriodReturn()` devolve o método usado (`DIETZ_DATADO` ou
+`DIETZ_MEIO_PERIODO`) para que a UI nunca esconda qual premissa foi aplicada.
 
 ### Quando não há dados suficientes
 

@@ -22,28 +22,30 @@ Não é um app de cotações. O objetivo é responder oito perguntas:
 
 ---
 
-## Status: Entrega 1 — Fundação
+## Status: Entrega 2 — Dashboard e Carteira
 
 | Entrega | Escopo | Situação |
 |---|---|---|
 | **1** | Scaffold, Supabase, schema, RLS, triggers, seed, domínio, testes | ✅ concluída |
-| 2 | Dashboard, Carteira consolidada, detalhe do ativo | aguardando aprovação |
+| **2** | Dashboard, Carteira consolidada, detalhe do ativo, fatores de risco | ✅ concluída |
 | 3 | Alocação Atual × Alvo, Aposentadoria 70 | aguardando aprovação |
 | 4 | Import Center (CSV), Fechamento Mensal | aguardando aprovação |
 
-A Entrega 1 não contém telas de negócio — apenas login e uma página de status
-que comprova sessão autenticada e acesso via RLS.
+**Dashboard e Carteira não dependem do seed.** Uma base sem nenhuma posição
+renderiza estados vazios úteis; ao importar a carteira real, todos os blocos
+passam a funcionar sem qualquer configuração adicional.
 
 ---
 
 ## Stack
 
-- **Next.js 16** (App Router, React Server Components) · **React 19**
+- **Next.js 16.2** (App Router, React Server Components) · **React 19.2**
+  - No Next.js 16 o `middleware.ts` chama-se **`proxy.ts`** — ver `src/proxy.ts`
 - **TypeScript** em modo estrito, com `noUncheckedIndexedAccess`
 - **Tailwind CSS 4** + primitivos no padrão **shadcn/ui**
 - **Supabase**: PostgreSQL, Auth (magic link), Storage
 - **Vitest** para a camada de domínio
-- **Recharts** para gráficos (a partir da Entrega 2)
+- **Recharts 3** para os gráficos de evolução e alocação
 - **Vercel** como ambiente de deploy
 
 ---
@@ -121,7 +123,7 @@ aplicação uma vez antes de rodá-lo. Ele é idempotente (IDs derivados por
 
 ```bash
 npm run dev          # http://localhost:3000
-npm test             # 100 testes de domínio
+npm test             # 125 testes de domínio
 npm run lint
 npm run build
 ```
@@ -139,7 +141,8 @@ src/
 │   ├── allocation/     pesos, gaps, status, destino do aporte
 │   ├── risk/           limites por bucket, setor, país, moeda
 │   ├── retirement/     projeção real, taxas de retirada, solvers reversos
-│   └── performance/    Modified Dietz, encadeamento TWR, retorno real
+│   ├── factors/        fatores de risco: derivação e exposição
+│   └── performance/    Modified Dietz datado, encadeamento TWR, retorno real
 ├── services/       Casos de uso: orquestram domínio + dados
 ├── data/           Repositórios Supabase e clientes
 ├── providers/      Portas de mercado + adapter manual
@@ -147,7 +150,7 @@ src/
 └── lib/            Formatação pt-BR, validação de ambiente
 
 supabase/
-├── migrations/     10 migrations versionadas
+├── migrations/     11 migrations versionadas
 ├── seed.sql        Seed demonstrativo (R$ 1.045.000)
 └── local/          Shim de auth para validar migrations em Postgres puro
 
@@ -186,3 +189,4 @@ bloqueia a inversão de dependência.
 | [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) | Tabelas, relacionamentos e decisões de modelagem |
 | [`docs/INVESTMENT_POLICY.md`](docs/INVESTMENT_POLICY.md) | Política, limites de risco e limites do software |
 | [`docs/MONTHLY_CLOSE.md`](docs/MONTHLY_CLOSE.md) | Workflow do fechamento mensal e imutabilidade |
+| [`docs/RISK_FACTORS.md`](docs/RISK_FACTORS.md) | Fatores de risco: derivação, sobreposição e limites |

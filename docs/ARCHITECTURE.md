@@ -29,7 +29,7 @@ corretoras, calcular gap de alocação, projetar aposentadoria em reais reais,
 separar aporte de rentabilidade — são exatamente as que ninguém quer descobrir
 quebradas seis meses depois.
 
-Isoladas em funções puras, elas rodam em 100 testes que levam menos de um
+Isoladas em funções puras, elas rodam em 125 testes que levam menos de três
 segundo, sem banco de pé. Espalhadas por componentes React, precisariam de
 navegador, sessão e dados de verdade para serem verificadas — na prática,
 nunca seriam.
@@ -101,7 +101,18 @@ Regra: **nunca comparar dinheiro por igualdade sem passar por `round2`.**
 Taxas usam `round6`, alinhado ao `numeric(8,6)` de
 `retirement_plan.expected_real_return`.
 
-## Sobre o Next.js 16
+## Versões
 
-Esta versão renomeou `middleware.ts` para **`proxy.ts`** (mesma funcionalidade).
-O arquivo vive em `src/proxy.ts` e exporta `proxy()` e `config`.
+O projeto é padronizado em **Next.js 16.2 + React 19.2**. Não há suporte nem
+compatibilidade pretendida com Next.js 15.
+
+Diferenças que afetam este código:
+
+| Mudança no Next 16 | Onde aparece |
+|---|---|
+| `middleware.ts` renomeado para **`proxy.ts`** | `src/proxy.ts`, exportando `proxy()` e `config` |
+| `params` de rota dinâmica são `Promise` | `src/app/(app)/carteira/[assetId]/page.tsx` |
+| `cookies()` é assíncrono | `src/data/supabase/server.ts` |
+| Turbopack no build de produção | padrão, sem configuração adicional |
+
+React 19 traz `useActionState`, usado no formulário de login.

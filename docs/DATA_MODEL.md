@@ -1,6 +1,6 @@
 # Modelo de dados
 
-22 tabelas, todas com UUID, `user_id` e RLS. Migrations em
+24 tabelas, todas com UUID, `user_id` e RLS. Migrations em
 `supabase/migrations/`, aplicadas em ordem numérica.
 
 ## Mapa
@@ -25,6 +25,9 @@ auth.users (Supabase Auth)
           ├── risk_limits               (limites configuráveis)
           ├── retirement_plan           (premissas, em reais reais)
           ├── real_estate               (fora do patrimônio investível)
+          │
+          ├── asset_risk_factors       (sobreposição de fatores)
+          ├── snapshot_factor_exposures (fatores congelados)
           │
           ├── column_mappings ── import_batches ── import_rows
           └── benchmarks ──────── benchmark_values
@@ -111,9 +114,11 @@ Fonte de verdade para separar aporte de rentabilidade. `amount` é sempre
 positivo; a direção vem de `flow_type` (`CONTRIBUTION`/`WITHDRAWAL`) — nunca do
 sinal, que seria ambíguo em agregações.
 
-No MVP o fechamento grava um fluxo líquido mensal e o Modified Dietz assume
-timing no meio do período. A estrutura já suporta fluxos datados
-individualmente: TWR preciso e XIRR passam a funcionar sem migration adicional.
+O Modified Dietz usa a **data real de cada fluxo** para ponderá-lo pelo tempo
+em que ficou investido. Um aporte no dia 10 de um período de 30 dias pesa 2/3,
+não 0,5. O peso fixo de meio de período é fallback exclusivo para quando só se
+conhece o agregado do mês — e, nesse caso, a UI informa explicitamente.
+XIRR virá sobre a mesma fonte, sem migration adicional.
 
 ### `retirement_plan`
 
@@ -133,6 +138,16 @@ capital = renda_mensal × 12 ÷ taxa
 R$ 7,5 milhões é apenas o capital da meta de R$ 25.000/mês **a 4%**. A 3,5% a
 mesma meta exige ~R$ 8,57 milhões. `withdrawal_rates` guarda o array de taxas
 avaliadas; `reference_withdrawal_rate` define qual aparece em destaque.
+
+### Fatores de risco (migration 0011)
+
+`asset_risk_factors` guarda apenas as **exceções**: a classificação padrão é
+derivada no domínio a partir de tipo, classe, setor e país. Assim a exposição
+fatorial funciona imediatamente para uma carteira real recém-importada, sem
+nenhuma classificação manual. Ver [`RISK_FACTORS.md`](RISK_FACTORS.md).
+
+`snapshot_factor_exposures` congela a exposição fatorial no fechamento, com a
+mesma proteção de imutabilidade das demais tabelas de snapshot.
 
 ### Imutabilidade (migration 0009)
 
