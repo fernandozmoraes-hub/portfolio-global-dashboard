@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+preview-carteira-real.txt
+carteira-real-2026-07-30.csv
