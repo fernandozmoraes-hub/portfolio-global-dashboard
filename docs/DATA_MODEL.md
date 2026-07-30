@@ -26,8 +26,8 @@ auth.users (Supabase Auth)
           ├── retirement_plan           (premissas, em reais reais)
           ├── real_estate               (fora do patrimônio investível)
           │
-          ├── asset_risk_factors       (sobreposição de fatores)
-          ├── snapshot_factor_exposures (fatores congelados)
+          ├── asset_exposure_tags          (sobreposição por dimensão)
+          ├── snapshot_dimension_exposures  (dimensões congeladas)
           │
           ├── column_mappings ── import_batches ── import_rows
           └── benchmarks ──────── benchmark_values
@@ -139,15 +139,19 @@ R$ 7,5 milhões é apenas o capital da meta de R$ 25.000/mês **a 4%**. A 3,5% a
 mesma meta exige ~R$ 8,57 milhões. `withdrawal_rates` guarda o array de taxas
 avaliadas; `reference_withdrawal_rate` define qual aparece em destaque.
 
-### Fatores de risco (migration 0011)
+### Exposição multidimensional (migration 0012)
 
-`asset_risk_factors` guarda apenas as **exceções**: a classificação padrão é
-derivada no domínio a partir de tipo, classe, setor e país. Assim a exposição
-fatorial funciona imediatamente para uma carteira real recém-importada, sem
-nenhuma classificação manual. Ver [`RISK_FACTORS.md`](RISK_FACTORS.md).
+A migration 0011 rateava o valor do ativo entre fatores para fechar 100% no
+agregado, o que subestimava toda concentração. A 0012 substitui aquele modelo
+por **dimensões independentes**: dentro de cada uma os pesos somam 1, entre
+dimensões não há soma.
 
-`snapshot_factor_exposures` congela a exposição fatorial no fechamento, com a
-mesma proteção de imutabilidade das demais tabelas de snapshot.
+`asset_exposure_tags` guarda apenas as **exceções**, por ativo E por dimensão —
+sobrepor MACRO não afeta GEOGRAFIA. `tag` é texto validado no domínio, não
+ENUM, para que um tema novo não exija migration.
+
+`snapshot_dimension_exposures` congela a exposição no fechamento.
+Ver [`EXPOSICAO.md`](EXPOSICAO.md).
 
 ### Imutabilidade (migration 0009)
 

@@ -27,7 +27,8 @@ Não é um app de cotações. O objetivo é responder oito perguntas:
 | Entrega | Escopo | Situação |
 |---|---|---|
 | **1** | Scaffold, Supabase, schema, RLS, triggers, seed, domínio, testes | ✅ concluída |
-| **2** | Dashboard, Carteira consolidada, detalhe do ativo, fatores de risco | ✅ concluída |
+| **2** | Dashboard, Carteira consolidada, detalhe do ativo | ✅ concluída |
+| **2.5** | Exposição multidimensional, convenção de dias, carga da carteira real | ✅ mecanismo pronto — aguardando os dados |
 | 3 | Alocação Atual × Alvo, Aposentadoria 70 | aguardando aprovação |
 | 4 | Import Center (CSV), Fechamento Mensal | aguardando aprovação |
 
@@ -123,7 +124,7 @@ aplicação uma vez antes de rodá-lo. Ele é idempotente (IDs derivados por
 
 ```bash
 npm run dev          # http://localhost:3000
-npm test             # 125 testes de domínio
+npm test             # 155 testes de domínio
 npm run lint
 npm run build
 ```
@@ -141,7 +142,7 @@ src/
 │   ├── allocation/     pesos, gaps, status, destino do aporte
 │   ├── risk/           limites por bucket, setor, país, moeda
 │   ├── retirement/     projeção real, taxas de retirada, solvers reversos
-│   ├── factors/        fatores de risco: derivação e exposição
+│   ├── exposure/       exposição em 6 dimensões independentes
 │   └── performance/    Modified Dietz datado, encadeamento TWR, retorno real
 ├── services/       Casos de uso: orquestram domínio + dados
 ├── data/           Repositórios Supabase e clientes
@@ -150,7 +151,7 @@ src/
 └── lib/            Formatação pt-BR, validação de ambiente
 
 supabase/
-├── migrations/     11 migrations versionadas
+├── migrations/     12 migrations versionadas
 ├── seed.sql        Seed demonstrativo (R$ 1.045.000)
 └── local/          Shim de auth para validar migrations em Postgres puro
 
@@ -189,4 +190,5 @@ bloqueia a inversão de dependência.
 | [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) | Tabelas, relacionamentos e decisões de modelagem |
 | [`docs/INVESTMENT_POLICY.md`](docs/INVESTMENT_POLICY.md) | Política, limites de risco e limites do software |
 | [`docs/MONTHLY_CLOSE.md`](docs/MONTHLY_CLOSE.md) | Workflow do fechamento mensal e imutabilidade |
-| [`docs/RISK_FACTORS.md`](docs/RISK_FACTORS.md) | Fatores de risco: derivação, sobreposição e limites |
+| [`docs/EXPOSICAO.md`](docs/EXPOSICAO.md) | Exposição multidimensional: as 6 dimensões e a derivação |
+| [`docs/CARTEIRA_REAL.md`](docs/CARTEIRA_REAL.md) | Formato do CSV e carga da carteira real |
