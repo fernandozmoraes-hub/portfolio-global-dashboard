@@ -10,8 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { createClient } from "@/data/supabase/server";
 import { getDashboardData } from "@/services/dashboard";
-import { ASSET_CLASS_LABELS, RISK_BUCKET_LABELS } from "@/domain/shared/types";
-import { RISK_FACTOR_DESCRIPTIONS } from "@/domain/factors/types";
+import { ASSET_CLASS_LABELS } from "@/domain/shared/types";
 import {
   formatBRL,
   formatDate,
@@ -20,13 +19,6 @@ import {
 } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
-
-const COUNTRY_LABELS: Record<string, string> = {
-  BR: "Brasil",
-  US: "Estados Unidos",
-  CN: "China",
-  EU: "Europa",
-};
 
 export default async function DashboardPage() {
   const db = await createClient();
@@ -197,34 +189,6 @@ export default async function DashboardPage() {
         </Card>
       </section>
 
-      {/* ---------------- Fatores de risco ---------------- */}
-      <section className="mt-4">
-        <Card>
-          <CardHeader>
-            <CardTitle>Exposição por fator de risco</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <BreakdownBars
-              items={data.byFactor.map((factor) => ({
-                key: factor.factor,
-                label: factor.label,
-                valueBRL: factor.valueBRL,
-                weight: factor.percentage,
-                hint: RISK_FACTOR_DESCRIPTIONS[factor.factor],
-              }))}
-              emptyMessage="Sem posições para fatorar."
-            />
-            <p className="mt-4 text-xs text-[var(--muted-foreground)]">
-              Classe responde onde o dinheiro está; fator responde ao que ele
-              reage. O valor de cada ativo é rateado entre seus fatores, e a
-              classificação é derivada automaticamente de tipo, classe, setor e
-              país — sobreponível por ativo quando o gestor discordar. Caixa não
-              carrega fator e fica fora da base.
-            </p>
-          </CardContent>
-        </Card>
-      </section>
-
       {/* ---------------- Exposições e alertas ---------------- */}
       <section className="mt-4 grid gap-4 lg:grid-cols-2">
         <Card>
@@ -253,70 +217,43 @@ export default async function DashboardPage() {
         </Card>
       </section>
 
-      {/* ---------------- Dimensões ---------------- */}
-      <section className="mt-4 grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Exposição geográfica</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <BreakdownBars
-              items={data.byCountry.map((slice) => ({
-                key: slice.key,
-                label: COUNTRY_LABELS[slice.key] ?? slice.key,
-                valueBRL: slice.valueBRL,
-                weight: slice.weight,
-              }))}
-            />
-            <p className="mt-4 text-xs text-[var(--muted-foreground)]">
-              Baseada no país do ativo. ETFs globais ainda não têm look-through
-              da carteira subjacente.
-            </p>
-          </CardContent>
-        </Card>
+      {/* ---------------- Exposição multidimensional ---------------- */}
+      <section className="mt-8">
+        <div className="mb-4 flex flex-col gap-1">
+          <h2 className="text-sm font-semibold tracking-tight">
+            Exposição por dimensão
+          </h2>
+          <p className="max-w-3xl text-xs text-[var(--muted-foreground)]">
+            Cada dimensão é uma leitura independente do <strong>mesmo</strong>{" "}
+            patrimônio: dentro de cada uma os percentuais somam 100%, e entre
+            dimensões não há soma. R$ 100 mil em GOOGL são R$ 100 mil em Equity
+            EUA <em>e</em> R$ 100 mil em Tecnologia — não R$ 50 mil em cada.
+          </p>
+        </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Exposição cambial</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <BreakdownBars
-              items={data.byCurrency.map((slice) => ({
-                key: slice.key,
-                valueBRL: slice.valueBRL,
-                weight: slice.weight,
-              }))}
-            />
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Exposição setorial</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <BreakdownBars items={data.bySector} />
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Exposição por risk bucket</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <BreakdownBars
-              items={data.byRiskBucket.map((slice) => ({
-                key: slice.key,
-                label:
-                  RISK_BUCKET_LABELS[
-                    slice.key as keyof typeof RISK_BUCKET_LABELS
-                  ] ?? slice.key,
-                valueBRL: slice.valueBRL,
-                weight: slice.weight,
-              }))}
-            />
-          </CardContent>
-        </Card>
+        <div className="grid gap-4 lg:grid-cols-2">
+          {data.dimensions.map((dimension) => (
+            <Card key={dimension.dimension}>
+              <CardHeader>
+                <CardTitle>{dimension.label}</CardTitle>
+                <p className="text-xs text-[var(--muted-foreground)]">
+                  {dimension.question}
+                </p>
+              </CardHeader>
+              <CardContent>
+                <BreakdownBars
+                  items={dimension.buckets.map((bucket) => ({
+                    key: bucket.tag,
+                    label: bucket.label,
+                    valueBRL: bucket.valueBRL,
+                    weight: bucket.percentage,
+                  }))}
+                  emptyMessage="Sem posições nesta dimensão."
+                />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       </section>
 
       <footer className="mt-10 border-t border-[var(--border)] pt-6 text-xs text-[var(--muted-foreground)]">

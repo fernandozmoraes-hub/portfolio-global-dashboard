@@ -2,7 +2,6 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { BreakdownBars } from "@/components/charts/BreakdownBars";
 import { KpiCard } from "@/components/portfolio/KpiCard";
 import { createClient } from "@/data/supabase/server";
 import { getAssetDetail } from "@/services/portfolio";
@@ -12,7 +11,11 @@ import {
   type AssetClass,
   type RiskBucket,
 } from "@/domain/shared/types";
-import { RISK_FACTOR_LABELS } from "@/domain/factors/types";
+import {
+  DIMENSION_LABELS,
+  labelFor,
+} from "@/domain/exposure/dimensions";
+import { labelForSharedTag } from "@/domain/exposure/derive";
 import {
   formatBRL,
   formatCurrency,
@@ -164,22 +167,45 @@ export default async function AssetDetailPage({
 
         <Card>
           <CardHeader>
-            <CardTitle>Fatores de risco</CardTitle>
+            <CardTitle>Exposição por dimensão</CardTitle>
+            <p className="text-xs text-[var(--muted-foreground)]">
+              A posição inteira conta em cada dimensão — não há rateio entre elas.
+            </p>
           </CardHeader>
           <CardContent>
-            <BreakdownBars
-              items={detail.factors.map((factor) => ({
-                key: factor.factor,
-                label: RISK_FACTOR_LABELS[factor.factor],
-                valueBRL: exposure.valueBRL * factor.weight,
-                weight: factor.weight * 100,
-              }))}
-              emptyMessage="Caixa não carrega fator de risco."
-            />
+            <ul className="flex flex-col gap-3">
+              {detail.dimensions.map((entry) => (
+                <li
+                  key={entry.dimension}
+                  className="flex flex-wrap items-baseline justify-between gap-2 text-sm"
+                >
+                  <span className="text-[var(--muted-foreground)]">
+                    {DIMENSION_LABELS[entry.dimension]}
+                  </span>
+                  <span className="text-right">
+                    {entry.tags.map((tag) => (
+                      <span key={tag.tag} className="ml-2 inline-block">
+                        {labelForSharedTag(entry.dimension, tag.tag) ??
+                          labelFor(entry.dimension, tag.tag)}
+                        {entry.tags.length > 1 ? (
+                          <span className="tabular ml-1 text-xs text-[var(--muted-foreground)]">
+                            {formatPercent(tag.weight * 100, 0)}
+                          </span>
+                        ) : null}
+                      </span>
+                    ))}
+                    {entry.isOverridden ? (
+                      <Badge variant="neutral" className="ml-2">
+                        manual
+                      </Badge>
+                    ) : null}
+                  </span>
+                </li>
+              ))}
+            </ul>
             <p className="mt-4 text-xs text-[var(--muted-foreground)]">
-              {detail.factorsAreOverridden
-                ? "Classificação definida manualmente pelo gestor."
-                : "Classificação derivada automaticamente de tipo, classe, setor e país."}
+              Percentual só aparece quando a dimensão é genuinamente dividida —
+              caso de uma debênture que é parte crédito, parte inflação.
             </p>
           </CardContent>
         </Card>

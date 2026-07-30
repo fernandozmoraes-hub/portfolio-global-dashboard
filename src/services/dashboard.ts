@@ -7,8 +7,8 @@ import {
 } from "@/domain/consolidation/consolidate";
 import { computeAllocation, type ClassAllocation } from "@/domain/allocation/gap";
 import { evaluateRiskLimits, type RiskAlert } from "@/domain/risk/limits";
-import { computeFactorExposure } from "@/domain/factors/exposure";
-import type { FactorExposure } from "@/domain/factors/types";
+import { computeDimensionalExposure } from "@/domain/exposure/compute";
+import type { DimensionExposure } from "@/domain/exposure/dimensions";
 import {
   computePeriodReturn,
   linkReturns,
@@ -60,7 +60,11 @@ export interface DashboardData {
   readonly byCurrency: readonly DimensionSlice[];
   readonly bySector: readonly DimensionSlice[];
   readonly byRiskBucket: readonly DimensionSlice[];
-  readonly byFactor: readonly FactorExposure[];
+  /**
+   * Exposição em dimensões independentes. Dentro de cada uma os percentuais
+   * somam 100%; entre dimensões não há soma.
+   */
+  readonly dimensions: readonly DimensionExposure[];
 
   readonly alerts: readonly RiskAlert[];
   readonly evolution: readonly EvolutionPoint[];
@@ -90,7 +94,7 @@ const EMPTY: DashboardData = {
   byCurrency: [],
   bySector: [],
   byRiskBucket: [],
-  byFactor: [],
+  dimensions: [],
   alerts: [],
   evolution: [],
   brazilPercent: null,
@@ -133,7 +137,7 @@ export async function getDashboardData(
       repo.getFxTable(db, referenceDate),
       repo.getAllocationTargets(db),
       repo.getRiskLimits(db),
-      repo.getFactorOverrides(db),
+      repo.getExposureOverrides(db),
       repo.getAssetTypes(db),
     ]);
 
@@ -174,7 +178,7 @@ export async function getDashboardData(
     byCurrency,
     bySector,
     byRiskBucket,
-    byFactor: computeFactorExposure(exposures, overrides, assetTypes),
+    dimensions: computeDimensionalExposure(exposures, overrides, assetTypes),
 
     alerts: evaluateRiskLimits(exposures, limits),
     evolution: buildEvolution(snapshots),

@@ -2,7 +2,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { PositionInput } from "@/domain/consolidation/consolidate";
 import type { AllocationTarget } from "@/domain/allocation/gap";
 import type { RiskLimit } from "@/domain/risk/limits";
-import type { FactorWeight, RiskFactor } from "@/domain/factors/types";
+import type {
+  DimensionWeight,
+  ExposureDimension,
+} from "@/domain/exposure/dimensions";
+import type { OverrideMap } from "@/domain/exposure/compute";
 import type { CashFlow } from "@/domain/performance/dietz";
 import type { FxTable } from "@/domain/money/convert";
 import type { AssetClass, Currency, RiskBucket } from "@/domain/shared/types";
@@ -195,26 +199,38 @@ export async function getRiskLimits(db: SupabaseClient): Promise<RiskLimit[]> {
   }));
 }
 
-/** Sobreposições manuais de fator, por ativo. */
-export async function getFactorOverrides(
+/**
+ * Sobreposições manuais de exposição, indexadas por ativo E dimensão.
+ *
+ * A ausência de linha para uma dimensão significa "use a derivação automática"
+ * — sobrepor MACRO não afeta GEOGRAFIA.
+ */
+export async function getExposureOverrides(
   db: SupabaseClient,
-): Promise<Map<string, FactorWeight[]>> {
+): Promise<OverrideMap> {
   const { data, error } = await db
-    .from("asset_risk_factors")
-    .select("asset_id, factor_code, weight");
+    .from("asset_exposure_tags")
+    .select("asset_id, dimension, tag, weight");
 
-  if (error) throw new Error(`Falha ao ler fatores: ${error.message}`);
+  if (error) throw new Error(`Falha ao ler tags de exposição: ${error.message}`);
 
-  const map = new Map<string, FactorWeight[]>();
+  const map = new Map<string, Map<ExposureDimension, DimensionWeight[]>>();
+
   for (const row of data ?? []) {
     const assetId = row.asset_id as string;
-    const list = map.get(assetId) ?? [];
-    list.push({
-      factor: row.factor_code as RiskFactor,
-      weight: num(row.weight),
-    });
-    map.set(assetId, list);
+    const dimension = row.dimension as ExposureDimension;
+
+    let byDimension = map.get(assetId);
+    if (!byDimension) {
+      byDimension = new Map();
+      map.set(assetId, byDimension);
+    }
+
+    const list = byDimension.get(dimension) ?? [];
+    list.push({ tag: row.tag as string, weight: num(row.weight) });
+    byDimension.set(dimension, list);
   }
+
   return map;
 }
 

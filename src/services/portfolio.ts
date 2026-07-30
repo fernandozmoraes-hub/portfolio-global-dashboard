@@ -5,8 +5,12 @@ import {
   type AssetExposure,
 } from "@/domain/consolidation/consolidate";
 import { evaluateRiskLimits, type RiskLimit } from "@/domain/risk/limits";
-import { resolveFactorWeights } from "@/domain/factors/derive";
-import type { FactorWeight } from "@/domain/factors/types";
+import { resolveDimension } from "@/domain/exposure/derive";
+import {
+  EXPOSURE_DIMENSIONS,
+  type DimensionWeight,
+  type ExposureDimension,
+} from "@/domain/exposure/dimensions";
 import type { PolicySeverity } from "@/domain/shared/types";
 import { round4 } from "@/domain/money/types";
 import * as repo from "@/data/repositories/portfolio";
@@ -122,8 +126,12 @@ export interface AssetDetail {
   readonly weight: number;
   readonly maxWeight: number | null;
   readonly severity: PolicySeverity;
-  readonly factors: readonly FactorWeight[];
-  readonly factorsAreOverridden: boolean;
+  /** Tags do ativo em cada dimensão, com indicação de sobreposição manual. */
+  readonly dimensions: readonly {
+    dimension: ExposureDimension;
+    tags: readonly DimensionWeight[];
+    isOverridden: boolean;
+  }[];
   readonly transactions: readonly repo.TransactionRow[];
   readonly income: readonly repo.IncomeRow[];
 }
@@ -140,7 +148,7 @@ export async function getAssetDetail(
       repo.getPositions(db, referenceDate),
       repo.getFxTable(db, referenceDate),
       repo.getRiskLimits(db),
-      repo.getFactorOverrides(db),
+      repo.getExposureOverrides(db),
       repo.getAssetTypes(db),
       repo.getTransactionsByAsset(db, assetId),
       repo.getIncomeByAsset(db, assetId),
@@ -156,26 +164,30 @@ export async function getAssetDetail(
     (item) => item.scope === "SINGLE_ASSET" && item.subject === exposure.ticker,
   );
 
-  const override = overrides.get(assetId);
+  const assetOverrides = overrides.get(assetId);
+  const tags = {
+    assetType: assetTypes.get(assetId) ?? "OUTROS",
+    assetClass: exposure.assetClass,
+    country: exposure.country,
+    currency: exposure.currency,
+    sector: exposure.sector,
+    riskBucket: exposure.riskBucket,
+    name: exposure.assetName,
+  };
 
   return {
     exposure,
     weight: totalBRL === 0 ? 0 : round4((exposure.valueBRL / totalBRL) * 100),
     maxWeight: maxWeightFor(exposure, limits),
     severity: alert?.severity ?? "OK",
-    factors: resolveFactorWeights(
-      {
-        assetType: assetTypes.get(assetId) ?? "OUTROS",
-        assetClass: exposure.assetClass,
-        country: exposure.country,
-        currency: exposure.currency,
-        sector: exposure.sector,
-        riskBucket: exposure.riskBucket,
-        name: exposure.assetName,
-      },
-      override,
-    ),
-    factorsAreOverridden: override !== undefined && override.length > 0,
+    dimensions: EXPOSURE_DIMENSIONS.map((dimension) => {
+      const override = assetOverrides?.get(dimension);
+      return {
+        dimension,
+        tags: resolveDimension(tags, dimension, override),
+        isOverridden: override !== undefined && override.length > 0,
+      };
+    }),
     transactions,
     income,
   };
