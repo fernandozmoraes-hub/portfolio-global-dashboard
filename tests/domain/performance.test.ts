@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  computePeriodReturn,
   linkReturns,
   modifiedDietz,
   modifiedDietzFromNetFlow,
@@ -196,5 +197,82 @@ describe("retorno real", () => {
     const real = realReturn(10, 5)!;
     expect(real).not.toBeCloseTo(5, 4);
     expect(real).toBeCloseTo(4.7619, 3);
+  });
+});
+
+describe("ponderação temporal real dos fluxos", () => {
+  const periodo = {
+    start: "2026-05-31",
+    end: "2026-06-30",
+    startValue: 1_020_000,
+    endValue: 1_045_000,
+  };
+
+  it("usa as datas reais quando os fluxos estão datados", () => {
+    const r = computePeriodReturn(
+      {
+        ...periodo,
+        flows: [{ date: "2026-06-10", type: "CONTRIBUTION", amountBRL: 10_000 }],
+      },
+      10_000,
+    );
+
+    expect(r!.method).toBe("DIETZ_DATADO");
+    // Aporte no dia 10 de um período de 30 dias fica investido 20/30 = 2/3
+    // => capital médio = 1.020.000 + 6.666,67 = 1.026.666,67
+    expect(r!.averageCapitalBRL).toBeCloseTo(1_026_666.67, 0);
+    expect(r!.marketGainBRL).toBeCloseTo(15_000, 2);
+    expect(r!.returnPercent).toBeCloseTo(1.4610, 3);
+  });
+
+  it("o peso real difere do peso fixo de 0,5", () => {
+    const datado = computePeriodReturn(
+      {
+        ...periodo,
+        flows: [{ date: "2026-06-10", type: "CONTRIBUTION", amountBRL: 10_000 }],
+      },
+      10_000,
+    );
+    const meioPeriodo = computePeriodReturn({ ...periodo, flows: [] }, 10_000);
+
+    expect(datado!.method).toBe("DIETZ_DATADO");
+    expect(meioPeriodo!.method).toBe("DIETZ_MEIO_PERIODO");
+    // Aporte antes do meio => mais capital empregado => retorno menor
+    expect(datado!.averageCapitalBRL).toBeGreaterThan(
+      meioPeriodo!.averageCapitalBRL,
+    );
+    expect(datado!.returnPercent).toBeLessThan(meioPeriodo!.returnPercent);
+  });
+
+  it("cai para o meio do período apenas na ausência de fluxos datados", () => {
+    const r = computePeriodReturn({ ...periodo, flows: [] }, 10_000);
+    expect(r!.method).toBe("DIETZ_MEIO_PERIODO");
+    expect(r!.averageCapitalBRL).toBeCloseTo(1_025_000, 2);
+  });
+
+  it("vários aportes datados são ponderados individualmente", () => {
+    const r = computePeriodReturn(
+      {
+        ...periodo,
+        flows: [
+          { date: "2026-06-05", type: "CONTRIBUTION", amountBRL: 5_000 },
+          { date: "2026-06-25", type: "CONTRIBUTION", amountBRL: 5_000 },
+        ],
+      },
+      10_000,
+    );
+
+    // pesos 25/30 e 5/30 => 4.166,67 + 833,33 = 5.000
+    expect(r!.averageCapitalBRL).toBeCloseTo(1_025_000, 0);
+    expect(r!.marketGainBRL).toBeCloseTo(15_000, 2);
+  });
+
+  it("devolve null quando o período não tem capital empregado", () => {
+    expect(
+      computePeriodReturn(
+        { start: "2026-05-31", end: "2026-06-30", startValue: 0, endValue: 0, flows: [] },
+        0,
+      ),
+    ).toBeNull();
   });
 });
