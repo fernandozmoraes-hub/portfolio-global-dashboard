@@ -1,0 +1,116 @@
+@import "tailwindcss";
+
+/*
+ * SISTEMA VISUAL — sóbrio, institucional, de private banking.
+ *
+ * Princípios:
+ *  - fundo neutro e tipografia de alto contraste; nada de gradiente ou neon;
+ *  - UMA cor de destaque discreta (azul-petróleo), usada com parcimônia;
+ *  - cor de status (verde/âmbar/vermelho) é RESERVADA à aderência à política.
+ *    Aqui, cor significa compliance — nunca decoração.
+ *  - números tabulares, para que colunas de valores alinhem verticalmente.
+ */
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --background: oklch(0.995 0 0);
+  --foreground: oklch(0.21 0.02 250);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.21 0.02 250);
+
+  --muted: oklch(0.97 0.005 250);
+  --muted-foreground: oklch(0.52 0.015 250);
+
+  --border: oklch(0.92 0.008 250);
+  --input: oklch(0.92 0.008 250);
+  --ring: oklch(0.45 0.06 220);
+
+  /* Destaque institucional: azul-petróleo contido */
+  --primary: oklch(0.38 0.055 225);
+  --primary-foreground: oklch(0.99 0 0);
+
+  --secondary: oklch(0.96 0.006 250);
+  --secondary-foreground: oklch(0.28 0.02 250);
+
+  /* Status de política — o único uso legítimo de cor forte */
+  --status-ok: oklch(0.52 0.11 155);
+  --status-attention: oklch(0.62 0.13 75);
+  --status-violation: oklch(0.53 0.16 25);
+
+  --radius: 0.5rem;
+}
+
+.dark {
+  --background: oklch(0.17 0.012 250);
+  --foreground: oklch(0.94 0.005 250);
+
+  --card: oklch(0.21 0.014 250);
+  --card-foreground: oklch(0.94 0.005 250);
+
+  --muted: oklch(0.25 0.014 250);
+  --muted-foreground: oklch(0.68 0.014 250);
+
+  --border: oklch(0.29 0.014 250);
+  --input: oklch(0.29 0.014 250);
+  --ring: oklch(0.65 0.07 220);
+
+  --primary: oklch(0.72 0.075 220);
+  --primary-foreground: oklch(0.17 0.012 250);
+
+  --secondary: oklch(0.26 0.014 250);
+  --secondary-foreground: oklch(0.94 0.005 250);
+
+  --status-ok: oklch(0.68 0.13 155);
+  --status-attention: oklch(0.76 0.14 78);
+  --status-violation: oklch(0.66 0.16 25);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-status-ok: var(--status-ok);
+  --color-status-attention: var(--status-attention);
+  --color-status-violation: var(--status-violation);
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /*
+   * Valores monetários alinham em coluna. Sem isso, tabelas financeiras
+   * ficam com os dígitos dançando de linha em linha.
+   */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+}
