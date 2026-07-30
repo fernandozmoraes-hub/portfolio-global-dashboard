@@ -9,6 +9,7 @@ import {
 } from "./derive";
 import {
   EXPOSURE_DIMENSIONS,
+  DIMENSION_KIND,
   DIMENSION_LABELS,
   DIMENSION_QUESTIONS,
   labelFor,
@@ -98,10 +99,14 @@ export function computeSingleDimension(
 
   return {
     dimension,
+    kind: DIMENSION_KIND[dimension],
     label: DIMENSION_LABELS[dimension],
     question: DIMENSION_QUESTIONS[dimension],
     buckets,
     totalBRL: round2(totalBRL),
+    // Em sobreposição a soma ultrapassa 100% — e isso é correto: o mesmo
+    // real reage a mais de um fator ao mesmo tempo.
+    percentageSum: round4(buckets.reduce((acc, b) => acc + b.percentage, 0)),
   };
 }
 
@@ -115,7 +120,7 @@ function toAssetTags(
     assetClass: exposure.assetClass,
     country: exposure.country,
     currency: exposure.currency,
-    sector: exposure.sector,
+    rawSector: exposure.sector,
     riskBucket: exposure.riskBucket,
     investmentStyle: classification?.investmentStyle ?? "NAO_APLICAVEL",
     indexador: classification?.indexador ?? "NONE",
@@ -150,7 +155,12 @@ function fallbackType(assetClass: string): string {
  */
 export function unclassifiedShare(dimension: DimensionExposure): number {
   return dimension.buckets
-    .filter((b) => b.tag === "OUTROS" || b.tag === "NAO_APLICAVEL")
+    .filter(
+      (b) =>
+        b.tag === "OUTROS" ||
+        b.tag === "NAO_APLICAVEL" ||
+        b.tag === "NAO_CLASSIFICADO",
+    )
     .reduce((acc, b) => acc + b.percentage, 0);
 }
 

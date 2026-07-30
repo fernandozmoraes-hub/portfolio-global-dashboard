@@ -1,286 +1,389 @@
 import type { AssetClass, Currency, RiskBucket } from "@/domain/shared/types";
 import { ASSET_CLASS_LABELS, RISK_BUCKET_LABELS } from "@/domain/shared/types";
 import { round6 } from "@/domain/money/types";
-import type {
-  DimensionWeight,
-  ExposureDimension,
-  GeographyTag,
-  MacroTag,
-  SectorThemeTag,
+import {
+  DIMENSION_KIND,
+  type DimensionWeight,
+  type ExposureDimension,
+  type GeographyTag,
+  type IssuerTag,
+  type MacroTag,
+  type SectorTag,
+  type ThemeTag,
 } from "./dimensions";
 
 /**
  * DERIVAÇÃO DAS TAGS POR DIMENSÃO
  * ================================
  *
- * A carteira real chega por importação, sem classificação nenhuma. Exigir
- * classificação manual de dezenas de ativos antes de ver qualquer coisa faria
- * as telas nascerem vazias. Por isso cada dimensão é derivada de atributos que
- * o ativo já possui.
+ * Duas regras distintas, conforme o tipo da dimensão:
  *
- * Regra central: **os pesos somam 1 DENTRO de cada dimensão**, e cada dimensão
- * é resolvida de forma totalmente independente das outras.
+ *   PARTIÇÃO       os pesos do ativo somam 1 (um balde só, ou divisão real)
+ *   SOBREPOSIÇÃO   cada tag recebe peso 1 — o valor INTEIRO do ativo
  *
- * Divisão dentro de uma dimensão só ocorre quando é economicamente real — um
- * papel indexado ao IPCA carrega crédito e inflação no mesmo título. Nunca se
- * divide um ativo só para "fechar" a soma entre dimensões diferentes.
+ * Um Tesouro IPCA+ em MACRO devolve três tags de peso 1: inflação, juro real
+ * e duration. Não é 70/30: o papel inteiro reage a cada um desses choques.
  */
 
-/** Indexador da remuneração. Espelha o ENUM rate_index (migration 0013). */
 export type RateIndex =
   | "IPCA" | "IGPM" | "CDI" | "SELIC" | "PREFIXADO" | "USD_FIXED" | "NONE";
 
-/** Indexadores que expõem o papel à inflação brasileira. */
 const INFLATION_LINKED: ReadonlySet<RateIndex> = new Set(["IPCA", "IGPM"]);
+const NOMINAL_LINKED: ReadonlySet<RateIndex> = new Set([
+  "CDI", "SELIC", "PREFIXADO",
+]);
 
 export interface AssetTags {
   readonly assetType: string;
   readonly assetClass: AssetClass;
   readonly country: string;
   readonly currency: Currency;
-  readonly sector: string | null;
-  /** Dimensionamento da posição. NÃO é estilo. */
+  /** Setor como veio da fonte, preservado sem normalização. */
+  readonly rawSector: string | null;
   readonly riskBucket: RiskBucket;
-  /** Estilo de investimento do ativo. NÃO é risk bucket. */
   readonly investmentStyle: string;
-  /** Indexador da remuneração. Fonte ÚNICA do fator inflação. */
   readonly indexador: RateIndex;
   readonly name: string;
 }
 
-function w(tag: string, weight: number): DimensionWeight {
+/** Tag de peso 1 — usado tanto para partição de balde único quanto para sobreposição. */
+function w(tag: string, weight = 1): DimensionWeight {
   return { tag, weight };
 }
 
-const COMMODITY_SECTORS = new Set(["Energia", "Materiais", "Mineração", "Agro"]);
-const TECH_SECTORS = new Set(["Tecnologia", "Technology", "Semicondutores"]);
+// ---------------------------------------------------------------------------
+// Normalização de setor
+// ---------------------------------------------------------------------------
+// As fontes trazem "Tecnologia / Internet", "Financeiro / Bancos". O texto
+// bruto é PRESERVADO em rawSector; aqui produz-se a forma canônica.
+// A parte antes da barra é a categoria; a de depois vira TEMA.
+// ---------------------------------------------------------------------------
+const SECTOR_CANON: Record<string, SectorTag> = {
+  tecnologia: "TECNOLOGIA",
+  technology: "TECNOLOGIA",
+  financeiro: "FINANCEIRO",
+  energia: "ENERGIA",
+  materiais: "MATERIAIS",
+  mineracao: "MATERIAIS",
+  saude: "SAUDE",
+  consumo: "CONSUMO",
+  industriais: "INDUSTRIAIS",
+  imobiliario: "IMOBILIARIO",
+  utilities: "UTILITIES",
+  comunicacao: "COMUNICACAO",
+  telecomunicacoes: "TELECOM",
+  telecom: "TELECOM",
+  "construcao civil": "CONSTRUCAO",
+  construcao: "CONSTRUCAO",
+  agro: "AGRO",
+  agronegocio: "AGRO",
+  acoes: "DIVERSIFICADO",
+  "renda fixa": "NAO_APLICAVEL",
+  "renda variavel brasil": "DIVERSIFICADO",
+  multimercado: "DIVERSIFICADO",
+  "governo federal": "NAO_APLICAVEL", // é EMISSOR, não setor
+  caixa: "NAO_APLICAVEL",
+  israel: "DIVERSIFICADO",
+  china: "DIVERSIFICADO",
+};
+
+/** Remove acentos e baixa a caixa, para casar com o dicionário. */
+function normalize(text: string): string {
+  return text
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+/** Parte antes da barra: a categoria de setor. */
+export function rawSectorHead(rawSector: string | null): string {
+  if (!rawSector) return "";
+  return normalize(rawSector.split("/")[0] ?? "");
+}
+
+/** Parte depois da barra: a especialização, que vira tema. */
+export function rawSectorTail(rawSector: string | null): string {
+  if (!rawSector) return "";
+  const parts = rawSector.split("/");
+  return parts.length > 1 ? normalize(parts.slice(1).join("/")) : "";
+}
+
+// ---------------------------------------------------------------------------
+// PARTIÇÕES
+// ---------------------------------------------------------------------------
+
+function deriveClasse(a: AssetTags): DimensionWeight[] {
+  return [w(a.assetClass)];
+}
+
+function deriveMoeda(a: AssetTags): DimensionWeight[] {
+  return [w(a.currency)];
+}
+
+function deriveEstilo(a: AssetTags): DimensionWeight[] {
+  if (a.investmentStyle && a.investmentStyle !== "NAO_APLICAVEL") {
+    return [w(a.investmentStyle)];
+  }
+  switch (a.assetType) {
+    case "ETF": return [w("INDICE")];
+    case "FII":
+    case "REIT": return [w("DIVIDENDOS")];
+    case "TESOURO_DIRETO":
+    case "CDB":
+    case "LCI_LCA":
+    case "DEBENTURE":
+    case "CRI":
+    case "CRA":
+    case "BOND": return [w("RENDA")];
+    case "ACAO": return [w("BLEND")];
+    default: return [w("NAO_APLICAVEL")];
+  }
+}
+
+function deriveRiskBucket(a: AssetTags): DimensionWeight[] {
+  return [w(a.riskBucket)];
+}
+
+function deriveGeografia(a: AssetTags): DimensionWeight[] {
+  const map: Record<string, GeographyTag> = {
+    BR: "BRASIL", US: "EUA", CN: "CHINA", EU: "EUROPA",
+    DE: "EUROPA", FR: "EUROPA", GB: "EUROPA", CH: "EUROPA",
+    IL: "OUTROS", AR: "EMERGENTES", GLOBAL: "GLOBAL",
+  };
+  return [w(map[a.country] ?? "OUTROS")];
+}
 
 /**
- * O papel está exposto à inflação brasileira?
+ * EMISSOR — quem deve o dinheiro.
  *
- * Decidido EXCLUSIVAMENTE pelo indexador. A heurística anterior olhava o nome
- * e tratava "incentivada" como sinal de inflação — erro conceitual: incentivada
- * é regime TRIBUTÁRIO (isenção de IR pela Lei 12.431), não indexação. Uma
- * debênture incentivada CDI+ não carrega risco de inflação nenhum, e uma
- * debênture comum IPCA+ carrega.
+ * Separado de setor porque "Governo Federal" é emissor soberano, não um ramo
+ * da economia. Confundir os dois fazia o Tesouro disparar o limite de
+ * concentração setorial, que mede outra coisa.
  */
-function isInflationLinked(asset: AssetTags): boolean {
-  return INFLATION_LINKED.has(asset.indexador);
-}
+function deriveEmissor(a: AssetTags): DimensionWeight[] {
+  const isBR = a.country === "BR";
 
-// ---------------------------------------------------------------------------
-// CLASSE — 1 ativo, 1 classe. Sempre 100%.
-// ---------------------------------------------------------------------------
-function deriveClasse(asset: AssetTags): DimensionWeight[] {
-  return [w(asset.assetClass, 1)];
-}
-
-// ---------------------------------------------------------------------------
-// MOEDA — moeda de denominação. Sempre 100%.
-// ---------------------------------------------------------------------------
-function deriveMoeda(asset: AssetTags): DimensionWeight[] {
-  return [w(asset.currency, 1)];
-}
-
-// ---------------------------------------------------------------------------
-// ESTILO — que tipo de retorno o ATIVO busca.
-// ---------------------------------------------------------------------------
-function deriveEstilo(asset: AssetTags): DimensionWeight[] {
-  if (asset.investmentStyle && asset.investmentStyle !== "NAO_APLICAVEL") {
-    return [w(asset.investmentStyle, 1)];
-  }
-
-  // Sem estilo declarado, infere pelo instrumento — nunca pelo risk bucket,
-  // que responde a outra pergunta.
-  switch (asset.assetType) {
-    case "ETF":
-      return [w("INDICE", 1)];
-    case "FII":
-    case "REIT":
-      return [w("DIVIDENDOS", 1)];
+  switch (a.assetType) {
     case "TESOURO_DIRETO":
+      return [w("SOBERANO_BR")];
     case "CDB":
     case "LCI_LCA":
+      return [w("BANCARIO_BR")];
     case "DEBENTURE":
+      return [w("CORPORATIVO_BR")];
     case "CRI":
     case "CRA":
+      return [w("SECURITIZADORA_BR")];
+    case "FII":
+      return [w("FII_BR")];
+    case "REIT":
+      return [w("REIT_US")];
+    case "FUNDO":
+      return [w("FUNDO_BR")];
+    case "CAIXA":
+      return [w("CAIXA")];
     case "BOND":
-      return [w("RENDA", 1)];
+      return [w(a.country === "US" ? "CORPORATIVO_US" : "CORPORATIVO_GLOBAL")];
     case "ACAO":
-      return [w("BLEND", 1)];
+      if (isBR) return [w("CORPORATIVO_BR")];
+      return [w(a.country === "US" ? "CORPORATIVO_US" : "CORPORATIVO_GLOBAL")];
+    case "ETF":
+      // ETF de Treasury é exposição soberana americana, não corporativa.
+      if (a.assetClass === "RF_CAIXA_EXTERIOR") return [w("SOBERANO_US")];
+      return [w("CORPORATIVO_GLOBAL")];
     default:
-      return [w("NAO_APLICAVEL", 1)];
+      return [w("NAO_CLASSIFICADO")];
   }
 }
 
-// ---------------------------------------------------------------------------
-// RISK_BUCKET — papel e limite de tamanho da posição.
-// ---------------------------------------------------------------------------
-// Dimensão própria, separada de ESTILO. Governa o teto individual: CORE 5%,
-// GROWTH 3%, ASYMMETRIC 0,5%. É decisão de dimensionamento do gestor, não
-// característica do ativo.
-// ---------------------------------------------------------------------------
-function deriveRiskBucket(asset: AssetTags): DimensionWeight[] {
-  return [w(asset.riskBucket, 1)];
-}
+function deriveSetor(a: AssetTags): DimensionWeight[] {
+  const head = rawSectorHead(a.rawSector);
+  const canon = SECTOR_CANON[head];
+  if (canon) return [w(canon)];
 
-// ---------------------------------------------------------------------------
-// GEOGRAFIA — a que economia a posição está exposta.
-// ---------------------------------------------------------------------------
-function deriveGeografia(asset: AssetTags): DimensionWeight[] {
-  const map: Record<string, GeographyTag> = {
-    BR: "BRASIL",
-    US: "EUA",
-    CN: "CHINA",
-    EU: "EUROPA",
-    DE: "EUROPA",
-    FR: "EUROPA",
-    GB: "EUROPA",
-    GLOBAL: "GLOBAL",
-  };
-  return [w(map[asset.country] ?? "OUTROS", 1)];
-}
-
-// ---------------------------------------------------------------------------
-// SETOR / TEMA — a que setor econômico ou tema a posição está exposta.
-// ---------------------------------------------------------------------------
-// É AQUI que Tecnologia/AI vive, e não em MACRO. Assim GOOGL conta 100% em
-// "Equity EUA" (macro) E 100% em "Tecnologia / AI" (setor), sem rateio.
-// ---------------------------------------------------------------------------
-function deriveSetorTema(asset: AssetTags): DimensionWeight[] {
-  const sector = asset.sector ?? "";
-
-  if (TECH_SECTORS.has(sector)) return [w("TECNOLOGIA_AI", 1)];
-
-  const bySector: Record<string, SectorThemeTag> = {
-    Financeiro: "FINANCEIRO",
-    Energia: "ENERGIA",
-    Materiais: "MATERIAIS",
-    Mineração: "MATERIAIS",
-    Saúde: "SAUDE",
-    Consumo: "CONSUMO",
-    Industriais: "INDUSTRIAIS",
-    Imobiliário: "IMOBILIARIO",
-    Agro: "AGRO",
-  };
-  const mapped = bySector[sector];
-  if (mapped) return [w(mapped, 1)];
-
-  // Sem setor declarado: infere pelo tipo de instrumento.
-  switch (asset.assetType) {
+  switch (a.assetType) {
     case "FII":
     case "REIT":
     case "CRI":
-      return [w("IMOBILIARIO", 1)];
+      return [w("IMOBILIARIO")];
     case "CRA":
-      return [w("AGRO", 1)];
+      return [w("AGRO")];
     case "ETF":
     case "FUNDO":
-      return [w("DIVERSIFICADO", 1)];
-    case "CAIXA":
+      return [w("DIVERSIFICADO")];
     case "TESOURO_DIRETO":
     case "CDB":
     case "LCI_LCA":
     case "BOND":
-      return [w("NAO_APLICAVEL", 1)];
-    default:
-      return [w("DIVERSIFICADO", 1)];
-  }
-}
-
-// ---------------------------------------------------------------------------
-// MACRO — a que choque macroeconômico a posição reage.
-// ---------------------------------------------------------------------------
-// Aqui a divisão dentro da dimensão é legítima: um papel IPCA+ carrega mesmo
-// dois riscos macro distintos no mesmo título.
-//
-// A fatia de inflação vem SEMPRE do indexador, nunca do regime tributário.
-// ---------------------------------------------------------------------------
-function deriveMacro(asset: AssetTags): DimensionWeight[] {
-  const sector = asset.sector ?? "";
-  const isBrazil = asset.country === "BR";
-  const isCommodity = COMMODITY_SECTORS.has(sector);
-
-  switch (asset.assetType) {
     case "CAIXA":
-      return [w("CAIXA", 1)];
-
-    case "TESOURO_DIRETO":
-      // NTN-B carrega juros real + inflação; LFT e LTN, só juros.
-      return isInflationLinked(asset)
-        ? [w("INFLACAO_BR", 0.7), w("JUROS_BR", 0.3)]
-        : [w("JUROS_BR", 1)];
-
-    case "CDB":
-    case "LCI_LCA":
-      return isInflationLinked(asset)
-        ? [w("INFLACAO_BR", 0.55), w("JUROS_BR", 0.3), w("CREDITO_BR", 0.15)]
-        : [w("JUROS_BR", 0.85), w("CREDITO_BR", 0.15)];
-
-    case "DEBENTURE":
-      // O que decide a fatia de inflação é o INDEXADOR, não o regime
-      // tributário: uma incentivada CDI+ não tem exposição a inflação.
-      return isInflationLinked(asset)
-        ? [w("CREDITO_BR", 0.55), w("INFLACAO_BR", 0.45)]
-        : [w("CREDITO_BR", 0.6), w("JUROS_BR", 0.4)];
-
-    case "CRI":
-      return isInflationLinked(asset)
-        ? [w("CREDITO_BR", 0.5), w("IMOBILIARIO", 0.3), w("INFLACAO_BR", 0.2)]
-        : [w("CREDITO_BR", 0.5), w("IMOBILIARIO", 0.3), w("JUROS_BR", 0.2)];
-
-    case "CRA":
-      return isInflationLinked(asset)
-        ? [w("CREDITO_BR", 0.5), w("COMMODITIES", 0.3), w("INFLACAO_BR", 0.2)]
-        : [w("CREDITO_BR", 0.5), w("COMMODITIES", 0.3), w("JUROS_BR", 0.2)];
-
-    case "ACAO": {
-      const equity: MacroTag = isBrazil ? "EQUITY_BR" : "EQUITY_US";
-      // Petrobras e Vale reagem a commodities além do equity local — divisão
-      // legítima dentro da dimensão macro.
-      return isCommodity ? [w(equity, 0.6), w("COMMODITIES", 0.4)] : [w(equity, 1)];
-    }
-
-    case "ETF": {
-      if (asset.assetClass === "RF_CAIXA_EXTERIOR") return [w("DURATION_USD", 1)];
-      if (asset.country === "US") return [w("EQUITY_US", 1)];
-      if (isBrazil) return [w("EQUITY_BR", 1)];
-      // Emergentes e demais mercados fora de BR/US têm fator próprio, em vez
-      // de desaparecer num residual.
-      return [w("EQUITY_EMERGENTES", 1)];
-    }
-
-    case "FII":
-      return [w("IMOBILIARIO", 1)];
-
-    case "REIT":
-      return [w("IMOBILIARIO", 0.7), w("EQUITY_US", 0.3)];
-
-    case "BOND":
-      return [w("DURATION_USD", 1)];
-
-    case "FUNDO":
-      // Sem transparência da carteira do fundo, é uma convenção declarada.
-      // O gestor sobrepõe quando conhecer a composição real.
-      return [w("JUROS_BR", 0.5), w("EQUITY_BR", 0.5)];
-
+      return [w("NAO_APLICAVEL")];
     default:
-      return [w("OUTROS", 1)];
+      return [w("DIVERSIFICADO")];
   }
 }
 
-const DERIVERS: Record<ExposureDimension, (asset: AssetTags) => DimensionWeight[]> =
-  {
-    CLASSE: deriveClasse,
-    GEOGRAFIA: deriveGeografia,
-    MOEDA: deriveMoeda,
-    SETOR_TEMA: deriveSetorTema,
-    ESTILO: deriveEstilo,
-    RISK_BUCKET: deriveRiskBucket,
-    MACRO: deriveMacro,
+// ---------------------------------------------------------------------------
+// SOBREPOSIÇÕES — cada tag pelo valor INTEIRO
+// ---------------------------------------------------------------------------
+
+const THEME_KEYWORDS: ReadonlyArray<readonly [RegExp, ThemeTag]> = [
+  [/semicondutor|semiconductor/, "SEMICONDUTORES"],
+  [/nuclear|uranio|uranium/, "NUCLEAR_URANIO"],
+  [/biotec|biotech/, "BIOTECH"],
+  [/dividendo|dividend/, "DIVIDENDOS"],
+  [/china/, "CHINA"],
+  [/defesa|defense/, "DEFESA"],
+  [/logistic/, "LOGISTICA"],
+  [/shopping|malls/, "SHOPPINGS"],
+  [/escritorio|office/, "ESCRITORIOS"],
+  [/saneamento/, "SANEAMENTO"],
+  [/credito imobiliario|recebiveis imobiliarios/, "CREDITO_IMOBILIARIO"],
+  [/internet|software|tecnologia|technology|inovacao|ai\b/, "TECNOLOGIA_AI"],
+];
+
+/**
+ * TEMAS — sobrepostos.
+ * Um ETF de semicondutores é 100% Tecnologia/AI E 100% Semicondutores.
+ */
+function deriveTema(a: AssetTags): DimensionWeight[] {
+  const texto = normalize(`${a.rawSector ?? ""} ${a.name}`);
+  const tags = new Set<ThemeTag>();
+
+  for (const [pattern, tag] of THEME_KEYWORDS) {
+    if (pattern.test(texto)) tags.add(tag);
+  }
+
+  // Semicondutor implica tecnologia, mesmo sem a palavra aparecer.
+  if (tags.has("SEMICONDUTORES")) tags.add("TECNOLOGIA_AI");
+
+  return [...tags].map((tag) => w(tag));
+}
+
+/**
+ * FATORES MACRO — sobrepostos, cada um pelo valor INTEIRO do ativo.
+ *
+ * Um Tesouro IPCA+ de R$ 100 mil contribui R$ 100 mil para inflação,
+ * R$ 100 mil para juro real e R$ 100 mil para duration. Não é rateio.
+ */
+function deriveMacro(a: AssetTags): DimensionWeight[] {
+  const tags = new Set<MacroTag>();
+  const isBR = a.country === "BR";
+  const head = rawSectorHead(a.rawSector);
+  const isCommodity = ["energia", "materiais", "mineracao", "agro"].includes(head);
+
+  const addRendaFixaBR = () => {
+    if (INFLATION_LINKED.has(a.indexador)) {
+      tags.add("INFLACAO_IPCA");
+      tags.add("JUROS_REAL_BR");
+      tags.add("DURATION_BR");
+    }
+    if (NOMINAL_LINKED.has(a.indexador)) {
+      tags.add("JUROS_NOMINAL_BR");
+      if (a.indexador === "PREFIXADO") tags.add("DURATION_BR");
+    }
+    if (a.indexador === "NONE") tags.add("NAO_CLASSIFICADO");
   };
 
-/** Tags derivadas de um ativo em UMA dimensão. Os pesos somam 1. */
+  switch (a.assetType) {
+    case "CAIXA":
+      tags.add("CAIXA");
+      break;
+
+    case "TESOURO_DIRETO":
+      addRendaFixaBR();
+      break;
+
+    case "CDB":
+    case "LCI_LCA":
+      addRendaFixaBR();
+      tags.add("CREDITO_BR");
+      break;
+
+    case "DEBENTURE":
+      addRendaFixaBR();
+      tags.add("CREDITO_BR");
+      if (isCommodity) tags.add("COMMODITIES");
+      break;
+
+    case "CRI":
+      addRendaFixaBR();
+      tags.add("CREDITO_BR");
+      tags.add("IMOBILIARIO");
+      break;
+
+    case "CRA":
+      addRendaFixaBR();
+      tags.add("CREDITO_BR");
+      tags.add("COMMODITIES");
+      break;
+
+    case "ACAO":
+      tags.add(isBR ? "EQUITY_BR" : a.country === "US" ? "EQUITY_US" : "EQUITY_EMERGENTES");
+      if (isCommodity) tags.add("COMMODITIES");
+      if (head === "imobiliario") tags.add("IMOBILIARIO");
+      break;
+
+    case "ETF":
+      if (a.assetClass === "RF_CAIXA_EXTERIOR") {
+        tags.add("DURATION_USD");
+      } else if (a.country === "US") {
+        tags.add("EQUITY_US");
+      } else if (isBR) {
+        tags.add("EQUITY_BR");
+      } else {
+        tags.add("EQUITY_EMERGENTES");
+      }
+      break;
+
+    case "FII":
+      tags.add("IMOBILIARIO");
+      // FII de papel carrega crédito e indexação além do imóvel.
+      if (INFLATION_LINKED.has(a.indexador)) {
+        tags.add("INFLACAO_IPCA");
+        tags.add("CREDITO_BR");
+      }
+      if (NOMINAL_LINKED.has(a.indexador)) {
+        tags.add("JUROS_NOMINAL_BR");
+        tags.add("CREDITO_BR");
+      }
+      break;
+
+    case "REIT":
+      tags.add("IMOBILIARIO");
+      tags.add("EQUITY_US");
+      break;
+
+    case "BOND":
+      tags.add("DURATION_USD");
+      tags.add(a.country === "US" ? "CREDITO_US" : "CREDITO_BR");
+      break;
+
+    case "FUNDO":
+      // Sem transparência da carteira, fica explicitamente não classificado —
+      // melhor do que inventar uma repartição.
+      tags.add("NAO_CLASSIFICADO");
+      break;
+
+    default:
+      tags.add("NAO_CLASSIFICADO");
+  }
+
+  return [...tags].map((tag) => w(tag));
+}
+
+const DERIVERS: Record<ExposureDimension, (a: AssetTags) => DimensionWeight[]> = {
+  CLASSE: deriveClasse,
+  GEOGRAFIA: deriveGeografia,
+  MOEDA: deriveMoeda,
+  EMISSOR: deriveEmissor,
+  SETOR: deriveSetor,
+  ESTILO: deriveEstilo,
+  RISK_BUCKET: deriveRiskBucket,
+  TEMA: deriveTema,
+  MACRO: deriveMacro,
+};
+
 export function deriveDimension(
   asset: AssetTags,
   dimension: ExposureDimension,
@@ -288,8 +391,17 @@ export function deriveDimension(
   return DERIVERS[dimension](asset);
 }
 
-/** Renormaliza para somar exatamente 1 dentro da dimensão. */
-export function normalize(weights: readonly DimensionWeight[]): DimensionWeight[] {
+/**
+ * Normaliza conforme o tipo da dimensão.
+ * Partição: força soma 1. Sobreposição: cada tag mantém peso 1.
+ */
+export function normalizeFor(
+  dimension: ExposureDimension,
+  weights: readonly DimensionWeight[],
+): DimensionWeight[] {
+  if (DIMENSION_KIND[dimension] === "SOBREPOSICAO") {
+    return weights.map((item) => ({ tag: item.tag, weight: 1 }));
+  }
   const total = weights.reduce((acc, item) => acc + item.weight, 0);
   if (total === 0) return [];
   return weights.map((item) => ({
@@ -298,31 +410,22 @@ export function normalize(weights: readonly DimensionWeight[]): DimensionWeight[
   }));
 }
 
-/**
- * Tags efetivas: sobreposição manual quando existe para AQUELA dimensão,
- * derivação automática caso contrário.
- *
- * A sobreposição é por dimensão: definir MACRO à mão não afeta GEOGRAFIA.
- */
 export function resolveDimension(
   asset: AssetTags,
   dimension: ExposureDimension,
   overrides: readonly DimensionWeight[] | undefined,
 ): DimensionWeight[] {
-  if (overrides && overrides.length > 0) return normalize(overrides);
-  return deriveDimension(asset, dimension);
+  if (overrides && overrides.length > 0) return normalizeFor(dimension, overrides);
+  return normalizeFor(dimension, deriveDimension(asset, dimension));
 }
 
-/** Rótulo para tags que reusam enums de shared/types. */
 export function labelForSharedTag(
   dimension: ExposureDimension,
   tag: string,
 ): string | null {
-  if (dimension === "CLASSE") {
-    return ASSET_CLASS_LABELS[tag as AssetClass] ?? null;
-  }
-  if (dimension === "RISK_BUCKET") {
-    return RISK_BUCKET_LABELS[tag as RiskBucket] ?? null;
-  }
+  if (dimension === "CLASSE") return ASSET_CLASS_LABELS[tag as AssetClass] ?? null;
+  if (dimension === "RISK_BUCKET") return RISK_BUCKET_LABELS[tag as RiskBucket] ?? null;
   return null;
 }
+
+export type { IssuerTag, SectorTag, ThemeTag };

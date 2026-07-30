@@ -26,9 +26,25 @@ import { round2 } from "@/domain/money/types";
  * reprecificadas para UMA data de referência e UM câmbio. Ver `reprice.ts`.
  */
 
-/** Posição com a data em que foi apurada. */
+/**
+ * Modo de importação — define o que o arquivo REPRESENTA.
+ *
+ *   FULL_ACCOUNT_SNAPSHOT  retrato completo da conta naquela data. O que não
+ *                          está no arquivo, não existe mais na conta.
+ *   PARTIAL_UPDATE         atualização de alguns ativos. O que não está no
+ *                          arquivo continua valendo do snapshot anterior.
+ *
+ * Sem essa distinção, um screenshot de um único fundo apagaria os outros seis
+ * da conta — foi exatamente o que aconteceu no primeiro preview da carteira
+ * real, descartando R$ 34 mil em multimercados.
+ */
+export type ImportMode = "FULL_ACCOUNT_SNAPSHOT" | "PARTIAL_UPDATE";
+
+/** Posição com a data em que foi apurada e o modo do import que a trouxe. */
 export interface DatedPosition extends PositionInput {
   readonly referenceDate: string;
+  /** Ausente = tratado como snapshot completo (padrão conservador). */
+  readonly importMode?: ImportMode;
 }
 
 /** Estado de atualização de uma fonte (conta de uma corretora). */
@@ -43,6 +59,8 @@ export interface SourceFreshness {
   readonly ageDays: number;
   /** Acima do limite tolerado — a UI deve destacar. */
   readonly isStale: boolean;
+  /** Limiar aplicado a esta fonte, em dias. */
+  readonly staleThresholdDays: number;
   readonly positionCount: number;
   readonly valueBRL: number;
 }
@@ -62,7 +80,44 @@ export interface CurrentPortfolio {
   readonly hasStaleSources: boolean;
 }
 
-/** Dias de defasagem a partir dos quais uma fonte é considerada desatualizada. */
+/**
+ * Limiares de defasagem POR TIPO DE FONTE.
+ *
+ * Um preço de ação de 30 dias atrás é obsoleto; a cota de um fundo que divulga
+ * mensalmente, não. Um limiar único trataria os dois como iguais.
+ */
+export interface StaleThresholds {
+  /** Padrão, quando nenhuma regra específica se aplica. */
+  readonly default: number;
+  /** Por tipo de ativo predominante na conta. */
+  readonly byAssetType?: Readonly<Record<string, number>>;
+  /** Por conta, quando o gestor conhece a cadência daquela fonte. */
+  readonly byAccountId?: Readonly<Record<string, number>>;
+}
+
+export const DEFAULT_STALE_THRESHOLDS: StaleThresholds = {
+  default: 5,
+  byAssetType: {
+    // Cotação diária: qualquer coisa acima de uma semana já é velha.
+    ACAO: 5,
+    ETF: 5,
+    FII: 5,
+    REIT: 5,
+    // Marcação diária, mas tolera atraso operacional.
+    TESOURO_DIRETO: 10,
+    BOND: 10,
+    CDB: 20,
+    LCI_LCA: 20,
+    DEBENTURE: 20,
+    CRI: 20,
+    CRA: 20,
+    // Cota de fundo costuma sair com defasagem.
+    FUNDO: 35,
+    CAIXA: 35,
+  },
+};
+
+/** Compatibilidade: limiar único legado. */
 export const DEFAULT_STALE_DAYS = 35;
 
 function daysBetween(from: string, to: string): number {
@@ -83,8 +138,11 @@ export function resolveCurrentPortfolio(
   positions: readonly DatedPosition[],
   asOf: string,
   fx: FxTable,
-  staleDays: number = DEFAULT_STALE_DAYS,
+  thresholds: StaleThresholds | number = DEFAULT_STALE_THRESHOLDS,
+  assetTypeById: ReadonlyMap<string, string> = new Map(),
 ): CurrentPortfolio {
+  const limits: StaleThresholds =
+    typeof thresholds === "number" ? { default: thresholds } : thresholds;
   if (positions.length === 0) {
     return {
       positions: [],
@@ -96,25 +154,49 @@ export function resolveCurrentPortfolio(
     };
   }
 
-  // Data mais recente de CADA conta — não uma data global.
-  const latestByAccount = new Map<string, string>();
+  // Último SNAPSHOT COMPLETO de cada conta — a base sobre a qual as
+  // atualizações parciais são sobrepostas.
+  const baseDateByAccount = new Map<string, string>();
   for (const position of positions) {
-    const current = latestByAccount.get(position.accountId);
+    if ((position.importMode ?? "FULL_ACCOUNT_SNAPSHOT") !== "FULL_ACCOUNT_SNAPSHOT") {
+      continue;
+    }
+    const current = baseDateByAccount.get(position.accountId);
     if (current === undefined || position.referenceDate > current) {
-      latestByAccount.set(position.accountId, position.referenceDate);
+      baseDateByAccount.set(position.accountId, position.referenceDate);
+    }
+  }
+
+  // Uma posição por (conta, ativo): a base do snapshot completo, depois
+  // sobreposta pela atualização parcial mais recente daquele ativo.
+  const chosen = new Map<string, DatedPosition>();
+
+  for (const position of positions) {
+    const key = `${position.accountId}::${position.assetId}`;
+    const mode = position.importMode ?? "FULL_ACCOUNT_SNAPSHOT";
+    const baseDate = baseDateByAccount.get(position.accountId);
+
+    if (mode === "FULL_ACCOUNT_SNAPSHOT") {
+      // Só entra se for do último snapshot completo da conta.
+      if (position.referenceDate !== baseDate) continue;
+    } else {
+      // Parcial anterior ao snapshot completo já foi absorvida por ele.
+      if (baseDate !== undefined && position.referenceDate <= baseDate) continue;
+    }
+
+    const previous = chosen.get(key);
+    if (previous === undefined || position.referenceDate > previous.referenceDate) {
+      chosen.set(key, position);
     }
   }
 
   const selected: PositionInput[] = [];
   const byAccount = new Map<string, { rows: DatedPosition[] }>();
 
-  for (const position of positions) {
-    if (position.referenceDate !== latestByAccount.get(position.accountId)) {
-      continue; // posição histórica desta conta
-    }
-
-    const { referenceDate: _ignored, ...rest } = position;
-    void _ignored;
+  for (const position of chosen.values()) {
+    const { referenceDate: _d, importMode: _m, ...rest } = position;
+    void _d;
+    void _m;
     selected.push(rest);
 
     const bucket = byAccount.get(position.accountId);
@@ -133,16 +215,35 @@ export function resolveCurrentPortfolio(
       return acc + row.quantity * row.currentPrice * rate;
     }, 0);
 
-    const ageDays = daysBetween(head.referenceDate, asOf);
+    // A data exibida é a mais ANTIGA da conta: é ela que limita a
+    // confiabilidade do conjunto, mesmo que um ativo tenha sido atualizado.
+    const datas = rows.map((r) => r.referenceDate).sort();
+    const oldestOfAccount = datas[0]!;
+    const ageDays = daysBetween(oldestOfAccount, asOf);
+
+    // Limiar: da conta, senão do tipo de ativo predominante, senão o padrão.
+    const tipos = rows.map((r) => assetTypeById.get(r.assetId) ?? "");
+    const predominante = tipos
+      .filter(Boolean)
+      .sort(
+        (a, b) =>
+          tipos.filter((t) => t === b).length - tipos.filter((t) => t === a).length,
+      )[0];
+
+    const threshold =
+      limits.byAccountId?.[accountId] ??
+      (predominante ? limits.byAssetType?.[predominante] : undefined) ??
+      limits.default;
 
     sources.push({
       accountId,
       accountName: head.accountName,
       brokerId: head.brokerId,
       brokerName: head.brokerName,
-      referenceDate: head.referenceDate,
+      referenceDate: oldestOfAccount,
       ageDays,
-      isStale: ageDays > staleDays,
+      isStale: ageDays > threshold,
+      staleThresholdDays: threshold,
       positionCount: rows.length,
       valueBRL: round2(valueBRL),
     });

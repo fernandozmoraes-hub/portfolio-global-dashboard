@@ -2,67 +2,79 @@
  * EXPOSIÇÃO MULTIDIMENSIONAL
  * ===========================
  *
- * O ERRO QUE ESTE MODELO CORRIGE
- * -------------------------------
- * A versão anterior tratava todos os fatores como um único conjunto e RATEAVA
- * o valor do ativo entre eles, para que o total global somasse 100%. Isso é
- * conceitualmente errado: R$ 100 mil em GOOGL não são R$ 50 mil de Equity EUA
- * mais R$ 50 mil de Tecnologia. São R$ 100 mil de Equity EUA **e**,
- * simultaneamente, R$ 100 mil de Tecnologia. A mesma moeda carrega as duas
- * exposições ao mesmo tempo.
+ * DOIS TIPOS DE DIMENSÃO
+ * ----------------------
+ * O erro corrigido na versão anterior era ratear entre fatores para fechar
+ * 100%. A correção agora vai um nível mais fundo: **nem toda dimensão é uma
+ * partição**.
  *
- * Ratear subestimava sistematicamente toda concentração.
+ *   PARTIÇÃO (soma 100%)
+ *     O ativo pertence a exatamente UM balde. Classe, geografia, moeda,
+ *     emissor, setor, estilo e risk bucket são assim: um Tesouro IPCA+ está
+ *     em RF Brasil, é brasileiro, é BRL, é soberano. Não há ambiguidade.
  *
- * O MODELO CORRETO
- * ----------------
- * As exposições vivem em DIMENSÕES INDEPENDENTES. Cada dimensão é uma partição
- * completa do patrimônio:
+ *   SOBREPOSIÇÃO (pode somar mais de 100%)
+ *     O ativo carrega N exposições SIMULTÂNEAS, cada uma pelo valor INTEIRO.
+ *     Fatores macro e temas são assim.
  *
- *   - DENTRO de uma dimensão, os pesos somam 100%;
- *   - ENTRE dimensões, não há relação alguma — a soma total é 100% por
- *     dimensão, não 100% no agregado.
+ * POR QUE FATORES NÃO SÃO PARTIÇÃO
+ * --------------------------------
+ * Um Tesouro IPCA+ de R$ 100 mil não é "70% inflação + 30% juros". Ele é:
  *
- * GOOGL a R$ 100 mil aparece como:
+ *     R$ 100.000 expostos à inflação IPCA        (100% do papel)
+ *     R$ 100.000 expostos a juros reais          (100% do papel)
+ *     R$ 100.000 expostos a duration             (100% do papel)
  *
- *   CLASSE       Ações/ETFs Exterior  R$ 100.000   (100% da posição)
- *   GEOGRAFIA    Estados Unidos       R$ 100.000   (100% da posição)
- *   MOEDA        USD                  R$ 100.000   (100% da posição)
- *   SETOR/TEMA   Tecnologia / AI      R$ 100.000   (100% da posição)
- *   ESTILO       Growth               R$ 100.000   (100% da posição)
- *   RISK BUCKET  Core                 R$ 100.000   (100% da posição)
- *   MACRO        Equity EUA           R$ 100.000   (100% da posição)
+ * Se o IPCA subir, os R$ 100 mil inteiros reagem. Se o juro real subir, os
+ * R$ 100 mil inteiros reagem. Ratear em 70/30 diria que só R$ 70 mil sofrem
+ * com inflação — falso, e subestima o risco.
  *
- * Sete leituras do MESMO dinheiro, cada uma respondendo a uma pergunta
- * diferente. Nenhuma divisão artificial.
+ * Um CRI IPCA+ carrega, cada um por inteiro: crédito, inflação, duration e
+ * imobiliário. Quatro exposições de 100% sobre o mesmo papel.
  *
- * Note ESTILO=Growth e RISK BUCKET=Core na mesma linha: são dimensões
- * distintas. Estilo descreve o ATIVO (busca crescimento); risk bucket descreve
- * o DIMENSIONAMENTO da posição (estrutural, teto de 5%).
- *
- * Divisão dentro de uma dimensão só acontece quando é economicamente real:
- * um papel indexado ao IPCA carrega juros real e inflação ao mesmo tempo,
- * e não há como separá-lo em dois.
+ * Consequência: numa dimensão de sobreposição, a soma dos percentuais
+ * ULTRAPASSA 100%, e isso é correto. O total exibido é o do patrimônio, e
+ * cada barra mede quanto do patrimônio reage àquele fator.
  */
 
 export const EXPOSURE_DIMENSIONS = [
   "CLASSE",
   "GEOGRAFIA",
   "MOEDA",
-  "SETOR_TEMA",
+  "EMISSOR",
+  "SETOR",
   "ESTILO",
   "RISK_BUCKET",
+  "TEMA",
   "MACRO",
 ] as const;
 
 export type ExposureDimension = (typeof EXPOSURE_DIMENSIONS)[number];
 
+/** Partição soma 100%; sobreposição pode ultrapassar. */
+export type DimensionKind = "PARTICAO" | "SOBREPOSICAO";
+
+export const DIMENSION_KIND: Record<ExposureDimension, DimensionKind> = {
+  CLASSE: "PARTICAO",
+  GEOGRAFIA: "PARTICAO",
+  MOEDA: "PARTICAO",
+  EMISSOR: "PARTICAO",
+  SETOR: "PARTICAO",
+  ESTILO: "PARTICAO",
+  RISK_BUCKET: "PARTICAO",
+  TEMA: "SOBREPOSICAO",
+  MACRO: "SOBREPOSICAO",
+};
+
 export const DIMENSION_LABELS: Record<ExposureDimension, string> = {
   CLASSE: "Classe econômica",
   GEOGRAFIA: "Geografia",
   MOEDA: "Moeda",
-  SETOR_TEMA: "Setor / Tema",
+  EMISSOR: "Emissor",
+  SETOR: "Setor",
   ESTILO: "Estilo de investimento",
   RISK_BUCKET: "Papel na carteira",
+  TEMA: "Temas",
   MACRO: "Fatores macro",
 };
 
@@ -70,42 +82,58 @@ export const DIMENSION_QUESTIONS: Record<ExposureDimension, string> = {
   CLASSE: "Em que classe de ativo o dinheiro está alocado?",
   GEOGRAFIA: "A que economia esse dinheiro está exposto?",
   MOEDA: "Em que moeda esse dinheiro está denominado?",
-  SETOR_TEMA: "A que setor ou tema esse dinheiro está exposto?",
+  EMISSOR: "Quem é o devedor ou emissor do papel?",
+  SETOR: "Em que setor econômico o emissor atua?",
   ESTILO: "Que tipo de retorno esse ativo busca?",
   RISK_BUCKET: "Que papel a posição cumpre e quanto ela pode pesar?",
-  MACRO: "A que choque macroeconômico esse dinheiro reage?",
+  TEMA: "A que teses ou temas essa posição está exposta?",
+  MACRO: "A que choques macroeconômicos esse dinheiro reage?",
 };
 
 // ---------------------------------------------------------------------------
-// Catálogo de tags por dimensão
+// EMISSOR — separado de setor
 // ---------------------------------------------------------------------------
-// CLASSE, MOEDA e RISK_BUCKET derivam de campos que o ativo já tem
-// (asset_class, currency, risk_bucket) e reusam os enums de shared/types.
-
-export const GEOGRAPHY_TAGS = [
-  "BRASIL",
-  "EUA",
-  "EUROPA",
-  "CHINA",
-  "EMERGENTES",
-  "GLOBAL",
-  "OUTROS",
+// "Governo Federal" é EMISSOR soberano, não setor econômico. Tratá-lo como
+// setor fazia o Tesouro disparar o limite de concentração setorial, que existe
+// para medir outra coisa (exposição a um ramo da economia).
+// ---------------------------------------------------------------------------
+export const ISSUER_TAGS = [
+  "SOBERANO_BR",
+  "SOBERANO_US",
+  "BANCARIO_BR",
+  "CORPORATIVO_BR",
+  "SECURITIZADORA_BR",
+  "CORPORATIVO_US",
+  "CORPORATIVO_GLOBAL",
+  "FUNDO_BR",
+  "FII_BR",
+  "REIT_US",
+  "CAIXA",
+  "NAO_CLASSIFICADO",
 ] as const;
 
-export type GeographyTag = (typeof GEOGRAPHY_TAGS)[number];
+export type IssuerTag = (typeof ISSUER_TAGS)[number];
 
-export const GEOGRAPHY_LABELS: Record<GeographyTag, string> = {
-  BRASIL: "Brasil",
-  EUA: "Estados Unidos",
-  EUROPA: "Europa",
-  CHINA: "China",
-  EMERGENTES: "Emergentes",
-  GLOBAL: "Global",
-  OUTROS: "Outros",
+export const ISSUER_LABELS: Record<IssuerTag, string> = {
+  SOBERANO_BR: "Soberano Brasil (Tesouro Nacional)",
+  SOBERANO_US: "Soberano EUA (Treasury)",
+  BANCARIO_BR: "Bancário Brasil",
+  CORPORATIVO_BR: "Corporativo Brasil",
+  SECURITIZADORA_BR: "Securitizadora Brasil (CRI/CRA)",
+  CORPORATIVO_US: "Corporativo EUA",
+  CORPORATIVO_GLOBAL: "Corporativo global",
+  FUNDO_BR: "Fundo de investimento BR",
+  FII_BR: "FII brasileiro",
+  REIT_US: "REIT norte-americano",
+  CAIXA: "Caixa",
+  NAO_CLASSIFICADO: "Não classificado",
 };
 
-export const SECTOR_THEME_TAGS = [
-  "TECNOLOGIA_AI",
+// ---------------------------------------------------------------------------
+// SETOR canônico — partição
+// ---------------------------------------------------------------------------
+export const SECTOR_TAGS = [
+  "TECNOLOGIA",
   "FINANCEIRO",
   "ENERGIA",
   "MATERIAIS",
@@ -113,15 +141,19 @@ export const SECTOR_THEME_TAGS = [
   "CONSUMO",
   "INDUSTRIAIS",
   "IMOBILIARIO",
+  "UTILITIES",
+  "COMUNICACAO",
+  "TELECOM",
+  "CONSTRUCAO",
   "AGRO",
   "DIVERSIFICADO",
   "NAO_APLICAVEL",
 ] as const;
 
-export type SectorThemeTag = (typeof SECTOR_THEME_TAGS)[number];
+export type SectorTag = (typeof SECTOR_TAGS)[number];
 
-export const SECTOR_THEME_LABELS: Record<SectorThemeTag, string> = {
-  TECNOLOGIA_AI: "Tecnologia / AI",
+export const SECTOR_LABELS: Record<SectorTag, string> = {
+  TECNOLOGIA: "Tecnologia",
   FINANCEIRO: "Financeiro",
   ENERGIA: "Energia",
   MATERIAIS: "Materiais",
@@ -129,22 +161,53 @@ export const SECTOR_THEME_LABELS: Record<SectorThemeTag, string> = {
   CONSUMO: "Consumo",
   INDUSTRIAIS: "Industriais",
   IMOBILIARIO: "Imobiliário",
+  UTILITIES: "Utilities",
+  COMUNICACAO: "Comunicação",
+  TELECOM: "Telecomunicações",
+  CONSTRUCAO: "Construção civil",
   AGRO: "Agronegócio",
   DIVERSIFICADO: "Diversificado (índice amplo)",
   NAO_APLICAVEL: "Não aplicável",
 };
 
-/**
- * ESTILO DE INVESTIMENTO — característica do ATIVO.
- *
- * NÃO confundir com `risk_bucket`, que é decisão de DIMENSIONAMENTO da posição
- * (quanto ela pode pesar: CORE 5%, GROWTH 3%, ASYMMETRIC 0,5%).
- *
- * O termo "growth" existe nos dois com sentidos diferentes: aqui significa
- * "ativo que busca crescimento de receita"; em risk_bucket significa "posição
- * que, por ser mais volátil, tem teto de 3%". Um ETF de índice pode ser
- * ESTILO=INDICE e RISK_BUCKET=CORE ao mesmo tempo.
- */
+// ---------------------------------------------------------------------------
+// TEMA — sobreposição
+// ---------------------------------------------------------------------------
+// Um ativo pode carregar vários temas ao mesmo tempo, cada um pelo valor
+// inteiro. SOXX é simultaneamente 100% Tecnologia/AI e 100% Semicondutores.
+// ---------------------------------------------------------------------------
+export const THEME_TAGS = [
+  "TECNOLOGIA_AI",
+  "SEMICONDUTORES",
+  "NUCLEAR_URANIO",
+  "BIOTECH",
+  "DIVIDENDOS",
+  "CHINA",
+  "DEFESA",
+  "LOGISTICA",
+  "SHOPPINGS",
+  "ESCRITORIOS",
+  "SANEAMENTO",
+  "CREDITO_IMOBILIARIO",
+] as const;
+
+export type ThemeTag = (typeof THEME_TAGS)[number];
+
+export const THEME_LABELS: Record<ThemeTag, string> = {
+  TECNOLOGIA_AI: "Tecnologia / AI",
+  SEMICONDUTORES: "Semicondutores",
+  NUCLEAR_URANIO: "Nuclear / Urânio",
+  BIOTECH: "Biotecnologia",
+  DIVIDENDOS: "Dividendos",
+  CHINA: "China",
+  DEFESA: "Defesa",
+  LOGISTICA: "Logística",
+  SHOPPINGS: "Shoppings",
+  ESCRITORIOS: "Escritórios",
+  SANEAMENTO: "Saneamento",
+  CREDITO_IMOBILIARIO: "Crédito imobiliário",
+};
+
 export const STYLE_TAGS = [
   "VALUE",
   "GROWTH",
@@ -169,16 +232,34 @@ export const STYLE_LABELS: Record<StyleTag, string> = {
   NAO_APLICAVEL: "Não aplicável",
 };
 
-/**
- * Fatores macro: a que choque a posição reage.
- *
- * TECNOLOGIA saiu daqui de propósito — ela é um SETOR, não um fator macro.
- * Mantê-la junto de Equity EUA obrigaria a ratear GOOGL entre as duas, que é
- * exatamente o erro que este modelo corrige.
- */
+export const GEOGRAPHY_TAGS = [
+  "BRASIL", "EUA", "EUROPA", "CHINA", "EMERGENTES", "GLOBAL", "OUTROS",
+] as const;
+
+export type GeographyTag = (typeof GEOGRAPHY_TAGS)[number];
+
+export const GEOGRAPHY_LABELS: Record<GeographyTag, string> = {
+  BRASIL: "Brasil",
+  EUA: "Estados Unidos",
+  EUROPA: "Europa",
+  CHINA: "China",
+  EMERGENTES: "Emergentes",
+  GLOBAL: "Global",
+  OUTROS: "Outros",
+};
+
+// ---------------------------------------------------------------------------
+// MACRO — sobreposição
+// ---------------------------------------------------------------------------
+// Cada tag mede quanto do patrimônio REAGE àquele choque, pelo valor inteiro.
+// A soma da dimensão ultrapassa 100% e isso é correto: um mesmo real pode
+// reagir a inflação, a juro real e a duration ao mesmo tempo.
+// ---------------------------------------------------------------------------
 export const MACRO_TAGS = [
-  "JUROS_BR",
-  "INFLACAO_BR",
+  "INFLACAO_IPCA",
+  "JUROS_REAL_BR",
+  "JUROS_NOMINAL_BR",
+  "DURATION_BR",
   "CREDITO_BR",
   "EQUITY_BR",
   "EQUITY_US",
@@ -186,15 +267,18 @@ export const MACRO_TAGS = [
   "COMMODITIES",
   "IMOBILIARIO",
   "DURATION_USD",
+  "CREDITO_US",
   "CAIXA",
-  "OUTROS",
+  "NAO_CLASSIFICADO",
 ] as const;
 
 export type MacroTag = (typeof MACRO_TAGS)[number];
 
 export const MACRO_LABELS: Record<MacroTag, string> = {
-  JUROS_BR: "Juros Brasil",
-  INFLACAO_BR: "Inflação Brasil",
+  INFLACAO_IPCA: "Inflação IPCA",
+  JUROS_REAL_BR: "Juros real Brasil",
+  JUROS_NOMINAL_BR: "Juros nominal Brasil (CDI/Selic/pré)",
+  DURATION_BR: "Duration Brasil",
   CREDITO_BR: "Crédito Brasil",
   EQUITY_BR: "Equity Brasil",
   EQUITY_US: "Equity EUA",
@@ -202,42 +286,52 @@ export const MACRO_LABELS: Record<MacroTag, string> = {
   COMMODITIES: "Commodities",
   IMOBILIARIO: "Imobiliário",
   DURATION_USD: "Duration USD",
+  CREDITO_US: "Crédito EUA",
   CAIXA: "Caixa",
-  OUTROS: "Não classificado",
+  NAO_CLASSIFICADO: "Não classificado",
 };
 
-/** Peso de uma tag dentro de UMA dimensão. Somam 1 por (ativo, dimensão). */
+/**
+ * Peso de uma tag.
+ *
+ * Em dimensão de PARTIÇÃO, os pesos de um ativo somam 1.
+ * Em dimensão de SOBREPOSIÇÃO, cada tag vale 1 (o valor inteiro do ativo).
+ */
 export interface DimensionWeight {
   readonly tag: string;
   readonly weight: number;
 }
 
-/** Uma faixa de exposição dentro de uma dimensão. */
 export interface ExposureBucket {
   readonly tag: string;
   readonly label: string;
   readonly valueBRL: number;
-  /** Percentual DENTRO da dimensão (as faixas somam 100). */
+  /** Percentual sobre o patrimônio total da dimensão. */
   readonly percentage: number;
   readonly assetCount: number;
 }
 
-/** Uma dimensão completa: partição de 100% do patrimônio. */
 export interface DimensionExposure {
   readonly dimension: ExposureDimension;
+  readonly kind: DimensionKind;
   readonly label: string;
   readonly question: string;
   readonly buckets: readonly ExposureBucket[];
-  /** Base considerada nesta dimensão (normalmente o patrimônio total). */
   readonly totalBRL: number;
+  /** Soma dos percentuais. 100 em partição; pode exceder em sobreposição. */
+  readonly percentageSum: number;
 }
 
 export function labelFor(dimension: ExposureDimension, tag: string): string {
   switch (dimension) {
     case "GEOGRAFIA":
       return GEOGRAPHY_LABELS[tag as GeographyTag] ?? tag;
-    case "SETOR_TEMA":
-      return SECTOR_THEME_LABELS[tag as SectorThemeTag] ?? tag;
+    case "EMISSOR":
+      return ISSUER_LABELS[tag as IssuerTag] ?? tag;
+    case "SETOR":
+      return SECTOR_LABELS[tag as SectorTag] ?? tag;
+    case "TEMA":
+      return THEME_LABELS[tag as ThemeTag] ?? tag;
     case "ESTILO":
       return STYLE_LABELS[tag as StyleTag] ?? tag;
     case "MACRO":

@@ -24,10 +24,19 @@ import {
 
 export interface RiskLimit {
   readonly scope: RiskLimitScope;
-  /** Chave do escopo: bucket, setor, país ou moeda. `null` = vale para todos. */
+  /** Chave do escopo: bucket, setor, país, moeda ou asset_type. `null` = todos. */
   readonly scopeKey: string | null;
   /** Teto em % da carteira global (0-100). */
   readonly maxPercentage: number;
+  /**
+   * Tipos de ativo aos quais o limite NÃO se aplica.
+   *
+   * Existe para o caso do Tesouro: um teto de 5% por ativo faz sentido para
+   * ação, não para título soberano — concentrar em NTN-B não é o mesmo risco
+   * que concentrar numa empresa. A exposição soberana é monitorada por classe,
+   * emissor, duration e vencimento, não por teto individual.
+   */
+  readonly exemptAssetTypes?: readonly string[];
 }
 
 export interface RiskAlert {
@@ -61,6 +70,14 @@ function severityFor(current: number, max: number): PolicySeverity | null {
 export function evaluateRiskLimits(
   exposures: readonly AssetExposure[],
   limits: readonly RiskLimit[],
+  assetTypeById: ReadonlyMap<string, string> = new Map(),
+  /**
+   * Setor CANÔNICO por ativo. Sem isso, o texto bruto da fonte é usado — e
+   * "Governo Federal" (que é EMISSOR, não setor) dispararia o limite de
+   * concentração setorial, que existe para medir exposição a um ramo da
+   * economia.
+   */
+  canonicalSectorById: ReadonlyMap<string, string> = new Map(),
 ): RiskAlert[] {
   const totalBRL = totalFinancialValueBRL(exposures);
   if (totalBRL === 0) return [];
@@ -70,14 +87,20 @@ export function evaluateRiskLimits(
   for (const limit of limits) {
     switch (limit.scope) {
       case "SINGLE_ASSET":
-        alerts.push(...checkSingleAsset(exposures, totalBRL, limit));
+        alerts.push(...checkSingleAsset(exposures, totalBRL, limit, assetTypeById));
         break;
       case "RISK_BUCKET":
         alerts.push(...checkBucketAggregate(exposures, totalBRL, limit));
         break;
       case "SECTOR":
         alerts.push(
-          ...checkDimension(exposures, totalBRL, limit, (e) => e.sector ?? "Não classificado"),
+          ...checkDimension(exposures, totalBRL, limit, (e) => {
+            const canon = canonicalSectorById.get(e.assetId);
+            // Setor não aplicável (soberano, caixa, RF bancária) não entra na
+            // conta de concentração setorial.
+            if (canon === "NAO_APLICAVEL") return "";
+            return canon ?? e.sector ?? "Não classificado";
+          }),
         );
         break;
       case "COUNTRY":
@@ -104,13 +127,18 @@ function checkSingleAsset(
   exposures: readonly AssetExposure[],
   totalBRL: number,
   limit: RiskLimit,
+  assetTypeById: ReadonlyMap<string, string>,
 ): RiskAlert[] {
   const alerts: RiskAlert[] = [];
+  const exempt = new Set(limit.exemptAssetTypes ?? []);
 
   for (const exposure of exposures) {
     if (limit.scopeKey !== null && exposure.riskBucket !== limit.scopeKey) {
       continue;
     }
+    // Tipos isentos não têm teto individual — são monitorados por outros
+    // recortes (classe, emissor, duration, vencimento).
+    if (exempt.has(assetTypeById.get(exposure.assetId) ?? "")) continue;
 
     const current = round4((exposure.valueBRL / totalBRL) * 100);
     const severity = severityFor(current, limit.maxPercentage);
@@ -174,6 +202,7 @@ function checkDimension(
   const alerts: RiskAlert[] = [];
 
   for (const group of groups) {
+    if (group.key === "") continue; // dimensão não aplicável a este ativo
     if (limit.scopeKey !== null && group.key !== limit.scopeKey) continue;
 
     const severity = severityFor(group.weight, limit.maxPercentage);

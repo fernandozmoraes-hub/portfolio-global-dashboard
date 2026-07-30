@@ -191,7 +191,7 @@ export async function getAssetDetail(
     assetClass: exposure.assetClass,
     country: exposure.country,
     currency: exposure.currency,
-    sector: exposure.sector,
+    rawSector: exposure.sector,
     riskBucket: exposure.riskBucket,
     investmentStyle: classification?.investmentStyle ?? "NAO_APLICAVEL",
     indexador: classification?.indexador ?? ("NONE" as const),
