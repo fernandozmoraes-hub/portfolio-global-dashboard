@@ -108,6 +108,29 @@ O campo `tag` é texto validado no domínio, não ENUM — acrescentar um tema n
 O fator antes chamado `EQUITY_GLOBAL` passou a `EQUITY_EMERGENTES`, que é o que
 ele de fato representa: equity de mercados emergentes fora de Brasil e EUA.
 
+## FIIs: estrutura ≠ magnitude
+
+`fii_type = PAPEL` e o tema `CREDITO_IMOBILIARIO` dizem **o que o fundo é** —
+não **quanto do NAV** está exposto a cada fator.
+
+Atribuir 100% do patrimônio de um FII de papel a `CREDITO_BR` afirmaria que
+todo o fundo é crédito, quando parte pode estar em caixa, LCI ou cotas de
+outros FIIs. E a repartição entre IPCA e CDI depende da carteira de CRIs, que
+muda a cada mês.
+
+Por isso:
+
+| | Fatores macro |
+|---|---|
+| FII de tijolo | `IMOBILIARIO` |
+| FII de papel / híbrido / FOF | `IMOBILIARIO` + `NAO_CLASSIFICADO` |
+
+Crédito, IPCA e CDI só entram com **look-through datado e proporcional**
+(`fund_exposure_snapshots`, fase futura). Até lá a parcela aparece como
+pendente — visível, não estimada. O mesmo vale para os fundos multimercado.
+
+Um `indexador` declarado num FII é ignorado pelos fatores macro.
+
 ## Congelamento histórico
 
 `snapshot_dimension_exposures` congela a exposição de cada dimensão no

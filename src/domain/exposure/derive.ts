@@ -344,14 +344,21 @@ function deriveMacro(a: AssetTags): DimensionWeight[] {
       break;
 
     case "FII":
+      // Imobiliário é estrutural: todo FII, de tijolo ou de papel, está
+      // exposto ao mercado imobiliário brasileiro.
       tags.add("IMOBILIARIO");
-      // FII de papel é, estruturalmente, uma carteira de CRIs: carrega crédito.
-      // Já a exposição a IPCA/CDI depende da COMPOSIÇÃO da carteira do fundo e
-      // só pode vir do look-through datado e ponderado. Transformar aqui o
-      // indexador predominante em 100% do NAV seria inventar um número, então
-      // essa parcela fica declaradamente pendente.
-      if (a.fiiType === "PAPEL" || a.fiiType === "HIBRIDO") {
-        tags.add("CREDITO_BR");
+
+      // Para FII de papel, `fii_type = PAPEL` e o tema CREDITO_IMOBILIARIO
+      // descrevem a NATUREZA do fundo — não a MAGNITUDE da exposição macro.
+      // Atribuir 100% do NAV a CREDITO_BR seria afirmar que todo o patrimônio
+      // do fundo é crédito, quando parte pode estar em caixa, LCI ou outros
+      // FIIs. Do mesmo modo, a repartição entre IPCA e CDI depende da carteira
+      // de CRIs, que varia mês a mês.
+      //
+      // Crédito, IPCA e CDI só entram com look-through datado e proporcional
+      // (fund_exposure_snapshots). Até lá, ficam declaradamente pendentes.
+      if (a.fiiType === "PAPEL" || a.fiiType === "HIBRIDO" || a.fiiType === "FOF") {
+        tags.add("NAO_CLASSIFICADO");
       }
       break;
 

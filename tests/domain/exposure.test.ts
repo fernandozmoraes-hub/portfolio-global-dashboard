@@ -381,3 +381,48 @@ describe("consolidação antes de classificar", () => {
     expect(computeDimensionalExposure([], new Map(), new Map())).toEqual([]);
   });
 });
+
+describe("FII: fii_type é estrutural, não magnitude de exposição macro", () => {
+  function fii(fiiType: "TIJOLO" | "PAPEL"): AssetTags {
+    return {
+      assetType: "FII",
+      assetClass: "FII_IMOBILIARIO",
+      country: "BR",
+      currency: "BRL",
+      rawSector: "Imobiliário",
+      riskBucket: "NAO_CLASSIFICADO",
+      investmentStyle: "DIVIDENDOS",
+      indexador: "NONE",
+      fiiType,
+      maturityDate: null,
+      name: "FII",
+    };
+  }
+
+  it("FII de tijolo carrega apenas imobiliário", () => {
+    expect(deriveDimension(fii("TIJOLO"), "MACRO").map((m) => m.tag)).toEqual([
+      "IMOBILIARIO",
+    ]);
+  });
+
+  it("FII de papel NÃO recebe 100% do NAV em crédito", () => {
+    const tags = deriveDimension(fii("PAPEL"), "MACRO").map((m) => m.tag);
+    // Parte do NAV pode estar em caixa, LCI ou outros FIIs — atribuir tudo a
+    // crédito seria inventar magnitude a partir de uma classificação estrutural.
+    expect(tags).not.toContain("CREDITO_BR");
+    expect(tags).not.toContain("INFLACAO_IPCA");
+    expect(tags).not.toContain("JUROS_NOMINAL_BR");
+  });
+
+  it("a parcela pendente de FII de papel fica visível como não classificada", () => {
+    const tags = deriveDimension(fii("PAPEL"), "MACRO").map((m) => m.tag).sort();
+    expect(tags).toEqual(["IMOBILIARIO", "NAO_CLASSIFICADO"]);
+  });
+
+  it("indexador declarado num FII não altera os fatores macro", () => {
+    const comIndexador = { ...fii("PAPEL"), indexador: "IPCA" as const };
+    expect(deriveDimension(comIndexador, "MACRO")).toEqual(
+      deriveDimension(fii("PAPEL"), "MACRO"),
+    );
+  });
+});
