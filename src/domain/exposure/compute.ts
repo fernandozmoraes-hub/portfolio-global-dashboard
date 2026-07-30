@@ -5,6 +5,7 @@ import {
   resolveDimension,
   labelForSharedTag,
   type AssetTags,
+  type FiiType,
   type RateIndex,
 } from "./derive";
 import {
@@ -42,6 +43,8 @@ export interface AssetClassification {
   readonly assetType: string;
   readonly indexador: RateIndex;
   readonly investmentStyle: string;
+  readonly fiiType: FiiType;
+  readonly maturityDate: string | null;
 }
 
 export function computeDimensionalExposure(
@@ -124,6 +127,8 @@ function toAssetTags(
     riskBucket: exposure.riskBucket,
     investmentStyle: classification?.investmentStyle ?? "NAO_APLICAVEL",
     indexador: classification?.indexador ?? "NONE",
+    fiiType: classification?.fiiType ?? "NAO_APLICAVEL",
+    maturityDate: classification?.maturityDate ?? null,
     name: exposure.assetName,
   };
 }

@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { PositionInput } from "@/domain/consolidation/consolidate";
 import type { DatedPosition } from "@/domain/positions/current";
 import type { AssetClassification } from "@/domain/exposure/compute";
-import type { RateIndex } from "@/domain/exposure/derive";
+import type { FiiType, RateIndex } from "@/domain/exposure/derive";
 import type { AllocationTarget } from "@/domain/allocation/gap";
 import type { RiskLimit } from "@/domain/risk/limits";
 import type {
@@ -213,7 +213,7 @@ export async function getAssetClassifications(
 ): Promise<Map<string, AssetClassification>> {
   const { data, error } = await db
     .from("assets")
-    .select("id, asset_type, indexador, investment_style");
+    .select("id, asset_type, indexador, investment_style, fii_type, maturity_date");
 
   if (error) throw new Error(`Falha ao ler classificação de ativos: ${error.message}`);
 
@@ -224,6 +224,8 @@ export async function getAssetClassifications(
         assetType: row.asset_type as string,
         indexador: (row.indexador as RateIndex) ?? "NONE",
         investmentStyle: (row.investment_style as string) ?? "NAO_APLICAVEL",
+        fiiType: (row.fii_type as FiiType) ?? "NAO_APLICAVEL",
+        maturityDate: (row.maturity_date as string | null) ?? null,
       },
     ]),
   );

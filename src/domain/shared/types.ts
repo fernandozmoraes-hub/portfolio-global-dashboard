@@ -37,6 +37,8 @@ export const RISK_BUCKETS = [
   "ASYMMETRIC",
   "DEFENSIVE",
   "CASH",
+  // Pendente de decisão do gestor. Nenhum teto por bucket se aplica.
+  "NAO_CLASSIFICADO",
 ] as const;
 
 export type RiskBucket = (typeof RISK_BUCKETS)[number];
@@ -48,6 +50,7 @@ export const RISK_BUCKET_LABELS: Record<RiskBucket, string> = {
   ASYMMETRIC: "Assimétrica",
   DEFENSIVE: "Defensiva",
   CASH: "Caixa",
+  NAO_CLASSIFICADO: "Não classificado",
 };
 
 /** Moedas suportadas no MVP. */

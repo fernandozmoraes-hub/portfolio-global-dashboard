@@ -18,7 +18,7 @@ import { evaluateRiskLimits, type RiskLimit } from "@/domain/risk/limits";
 import { deriveDimension } from "@/domain/exposure/derive";
 import { computeAllocation, type AllocationTarget } from "@/domain/allocation/gap";
 import { ASSET_CLASS_LABELS, type AssetClass } from "@/domain/shared/types";
-import type { RateIndex } from "@/domain/exposure/derive";
+import type { FiiType, RateIndex } from "@/domain/exposure/derive";
 
 /**
  * PREVIEW DA CARTEIRA REAL — Entrega 2.5
@@ -148,6 +148,8 @@ const setorCanonico = new Map(
         riskBucket: "CORE",
         investmentStyle: "NAO_APLICAVEL",
         indexador: (r.indexador || "NONE") as RateIndex,
+        fiiType: (r.fii_type || "NAO_APLICAVEL") as FiiType,
+        maturityDate: r.maturity_date || null,
         name: r.asset_name!,
       },
       "SETOR",
@@ -169,6 +171,8 @@ const classificacoes = new Map<string, AssetClassification>(
       assetType: r.asset_type!,
       indexador: (r.indexador || "NONE") as RateIndex,
       investmentStyle: r.investment_style || "NAO_APLICAVEL",
+      fiiType: (r.fii_type || "NAO_APLICAVEL") as FiiType,
+      maturityDate: r.maturity_date || null,
     },
   ]),
 );

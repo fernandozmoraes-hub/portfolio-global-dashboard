@@ -40,6 +40,8 @@ const COLUNAS = [
   "risk_bucket",
   "investment_style",
   "indexador",
+  "fii_type",
+  "maturity_date",
   "quantity",
   "average_cost",
   "current_price",
@@ -54,7 +56,6 @@ const OBRIGATORIAS = [
   "asset_class",
   "country",
   "currency",
-  "risk_bucket",
   "quantity",
   "current_price",
   "reference_date",
@@ -71,12 +72,14 @@ const STYLES = new Set([
   "VALUE", "GROWTH", "BLEND", "QUALIDADE", "DIVIDENDOS", "INDICE", "RENDA",
   "NAO_APLICAVEL",
 ]);
+const FII_TYPES = new Set(["TIJOLO","PAPEL","HIBRIDO","FOF","NAO_APLICAVEL"]);
 const ASSET_TYPES = new Set([
   "ACAO", "ETF", "FII", "TESOURO_DIRETO", "CDB", "LCI_LCA", "DEBENTURE",
   "CRI", "CRA", "FUNDO", "BOND", "REIT", "CAIXA",
 ]);
 const RISK_BUCKETS = new Set([
   "CORE", "GROWTH", "SATELLITE", "ASYMMETRIC", "DEFENSIVE", "CASH",
+  "NAO_CLASSIFICADO",
 ]);
 const CURRENCIES = new Set(["BRL", "USD", "EUR"]);
 
@@ -161,9 +164,21 @@ function validar(registros) {
       erros.push(`linha ${linha}: indexador inválido — "${r.indexador}"`);
     if (r.investment_style && !STYLES.has(r.investment_style))
       erros.push(`linha ${linha}: estilo inválido — "${r.investment_style}"`);
+    if (r.fii_type && !FII_TYPES.has(r.fii_type))
+      erros.push(`linha ${linha}: fii_type inválido — "${r.fii_type}"`);
+    if (r.asset_type === "FII" && (!r.fii_type || r.fii_type === "NAO_APLICAVEL"))
+      avisos.push(`linha ${linha}: ${r.ticker} é FII sem fii_type (tijolo/papel)`);
+    if (r.asset_type !== "FII" && r.fii_type && r.fii_type !== "NAO_APLICAVEL")
+      erros.push(`linha ${linha}: fii_type só se aplica a FII — "${r.ticker}"`);
+    // Indexador em FII é ruído: a exposição real vem do look-through.
+    if (r.asset_type === "FII" && r.indexador && r.indexador !== "NONE")
+      erros.push(`linha ${linha}: FII não deve ter indexador (${r.ticker}) — use fii_type`);
+    if (r.maturity_date && !/^\d{4}-\d{2}-\d{2}$/.test(r.maturity_date))
+      erros.push(`linha ${linha}: maturity_date deve ser AAAA-MM-DD — "${r.maturity_date}"`);
 
     // O indexador decide o fator inflação. Sem ele, renda fixa fica sem
     // exposição a inflação — o que pode estar errado e passa despercebido.
+    // FII fica de fora: indexador não é propriedade estrutural dele.
     const rendaFixa = ["TESOURO_DIRETO", "CDB", "LCI_LCA", "DEBENTURE", "CRI", "CRA"];
     if (rendaFixa.includes(r.asset_type) && (!r.indexador || r.indexador === "NONE")) {
       avisos.push(
@@ -267,9 +282,9 @@ function gerarSQL(registros, opcoes) {
   // Ativos — is_demo FALSE: carteira real
   for (const a of ativos) {
     const chave = `${a.ticker}|${a.exchange || "N/A"}|${a.currency}`;
-    out.push(`  insert into assets (id, user_id, ticker, name, exchange, asset_type, asset_class, country, currency, sector, risk_bucket, investment_style, indexador, is_demo)`);
-    out.push(`  values (md5(v_user::text||'asset:${chave}')::uuid, v_user, ${q(a.ticker)}, ${q(a.asset_name)}, ${q(a.exchange || "N/A")}, '${a.asset_type || "ACAO"}', '${a.asset_class}', ${q(a.country)}, '${a.currency}', ${q(a.sector)}, '${a.risk_bucket}', '${a.investment_style || "NAO_APLICAVEL"}', '${a.indexador || "NONE"}', false)`);
-    out.push(`  on conflict (id) do update set asset_class = excluded.asset_class, risk_bucket = excluded.risk_bucket, sector = excluded.sector, investment_style = excluded.investment_style, indexador = excluded.indexador;`);
+    out.push(`  insert into assets (id, user_id, ticker, name, exchange, asset_type, asset_class, country, currency, sector, risk_bucket, investment_style, indexador, fii_type, maturity_date, is_demo)`);
+    out.push(`  values (md5(v_user::text||'asset:${chave}')::uuid, v_user, ${q(a.ticker)}, ${q(a.asset_name)}, ${q(a.exchange || "N/A")}, '${a.asset_type || "ACAO"}', '${a.asset_class}', ${q(a.country)}, '${a.currency}', ${q(a.sector)}, '${a.risk_bucket || "NAO_CLASSIFICADO"}', '${a.investment_style || "NAO_APLICAVEL"}', '${a.indexador || "NONE"}', '${a.fii_type || "NAO_APLICAVEL"}', ${a.maturity_date ? `'${a.maturity_date}'` : "null"}, false)`);
+    out.push(`  on conflict (id) do update set asset_class = excluded.asset_class, risk_bucket = excluded.risk_bucket, sector = excluded.sector, investment_style = excluded.investment_style, indexador = excluded.indexador, fii_type = excluded.fii_type, maturity_date = excluded.maturity_date;`);
   }
   out.push("");
 

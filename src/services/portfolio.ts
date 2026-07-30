@@ -195,6 +195,8 @@ export async function getAssetDetail(
     riskBucket: exposure.riskBucket,
     investmentStyle: classification?.investmentStyle ?? "NAO_APLICAVEL",
     indexador: classification?.indexador ?? ("NONE" as const),
+    fiiType: classification?.fiiType ?? ("NAO_APLICAVEL" as const),
+    maturityDate: classification?.maturityDate ?? null,
     name: exposure.assetName,
   };
 

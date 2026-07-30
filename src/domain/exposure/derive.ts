@@ -28,6 +28,9 @@ import {
 export type RateIndex =
   | "IPCA" | "IGPM" | "CDI" | "SELIC" | "PREFIXADO" | "USD_FIXED" | "NONE";
 
+/** Natureza do FII. Espelha o ENUM fii_type (migration 0014). */
+export type FiiType = "TIJOLO" | "PAPEL" | "HIBRIDO" | "FOF" | "NAO_APLICAVEL";
+
 const INFLATION_LINKED: ReadonlySet<RateIndex> = new Set(["IPCA", "IGPM"]);
 const NOMINAL_LINKED: ReadonlySet<RateIndex> = new Set([
   "CDI", "SELIC", "PREFIXADO",
@@ -43,6 +46,10 @@ export interface AssetTags {
   readonly riskBucket: RiskBucket;
   readonly investmentStyle: string;
   readonly indexador: RateIndex;
+  /** Natureza do FII. Para não-FII, NAO_APLICAVEL. */
+  readonly fiiType: FiiType;
+  /** Vencimento, quando conhecido. Nunca deduzido de ticker ou nome. */
+  readonly maturityDate: string | null;
   readonly name: string;
 }
 
@@ -338,13 +345,12 @@ function deriveMacro(a: AssetTags): DimensionWeight[] {
 
     case "FII":
       tags.add("IMOBILIARIO");
-      // FII de papel carrega crédito e indexação além do imóvel.
-      if (INFLATION_LINKED.has(a.indexador)) {
-        tags.add("INFLACAO_IPCA");
-        tags.add("CREDITO_BR");
-      }
-      if (NOMINAL_LINKED.has(a.indexador)) {
-        tags.add("JUROS_NOMINAL_BR");
+      // FII de papel é, estruturalmente, uma carteira de CRIs: carrega crédito.
+      // Já a exposição a IPCA/CDI depende da COMPOSIÇÃO da carteira do fundo e
+      // só pode vir do look-through datado e ponderado. Transformar aqui o
+      // indexador predominante em 100% do NAV seria inventar um número, então
+      // essa parcela fica declaradamente pendente.
+      if (a.fiiType === "PAPEL" || a.fiiType === "HIBRIDO") {
         tags.add("CREDITO_BR");
       }
       break;

@@ -59,7 +59,13 @@ function cls(
   indexador: RateIndex = "NONE",
   investmentStyle = "NAO_APLICAVEL",
 ): AssetClassification {
-  return { assetType, indexador, investmentStyle };
+  return {
+    assetType,
+    indexador,
+    investmentStyle,
+    fiiType: "NAO_APLICAVEL",
+    maturityDate: null,
+  };
 }
 
 const TIPOS = new Map([["googl", cls("ACAO")]]);
@@ -112,6 +118,8 @@ describe("FATORES MACRO são SOBREPOSTOS — nunca rateados", () => {
       riskBucket: "DEFENSIVE",
       investmentStyle: "RENDA",
       indexador,
+      fiiType: "NAO_APLICAVEL",
+      maturityDate: null,
       name,
     };
   }
@@ -185,6 +193,8 @@ describe("inflação vem do INDEXADOR, não do regime tributário", () => {
       riskBucket: "DEFENSIVE",
       investmentStyle: "RENDA",
       indexador,
+      fiiType: "NAO_APLICAVEL",
+      maturityDate: null,
       name,
     };
   }
@@ -218,6 +228,8 @@ describe("EMISSOR é separado de SETOR", () => {
       riskBucket: "DEFENSIVE",
       investmentStyle: "RENDA",
       indexador: "IPCA",
+      fiiType: "NAO_APLICAVEL",
+      maturityDate: null,
       name: "Tesouro IPCA+ 2035",
     };
   }
@@ -253,6 +265,8 @@ describe("SETOR canônico preserva o texto bruto", () => {
       riskBucket: "CORE",
       investmentStyle: "BLEND",
       indexador: "NONE",
+      fiiType: "NAO_APLICAVEL",
+      maturityDate: null,
       name: "Ativo",
     };
   }
@@ -287,6 +301,8 @@ describe("TEMAS são sobrepostos", () => {
       riskBucket: "CORE",
       investmentStyle: "INDICE",
       indexador: "NONE",
+      fiiType: "NAO_APLICAVEL",
+      maturityDate: null,
       name: "iShares Semiconductor ETF",
     };
     const temas = deriveDimension(asset, "TEMA");
@@ -304,6 +320,8 @@ describe("TEMAS são sobrepostos", () => {
       riskBucket: "DEFENSIVE",
       investmentStyle: "RENDA",
       indexador: "CDI",
+      fiiType: "NAO_APLICAVEL",
+      maturityDate: null,
       name: "CDB",
     };
     expect(deriveDimension(asset, "TEMA")).toEqual([]);
@@ -326,6 +344,8 @@ describe("pesos somam 1 apenas nas dimensões de partição", () => {
       riskBucket: "CORE",
       investmentStyle: "NAO_APLICAVEL",
       indexador: "IPCA",
+      fiiType: "NAO_APLICAVEL",
+      maturityDate: null,
       name: "Ativo",
     };
 
