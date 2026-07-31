@@ -276,21 +276,28 @@ export async function getAllocationTargets(
 export async function getRiskLimits(db: SupabaseClient): Promise<RiskLimit[]> {
   const { data, error } = await db
     .from("risk_limits")
-    .select("scope, scope_key, max_percentage, warn_percentage, exempt_asset_types")
+    .select(
+      "scope, scope_key, max_percentage, warn_percentage, warn_below_percentage, exempt_asset_types",
+    )
     .eq("is_active", true);
 
   if (error) throw new Error(`Falha ao ler limites de risco: ${error.message}`);
 
+  // Nulo nas colunas de limiar significa "este lado não existe", não zero — por
+  // isso elas não passam por num(), que converteria null em 0 e deixaria todo
+  // limite permanentemente amarelo (ou permanentemente violado, no caso do teto).
+  const opcional = (value: unknown): number | null =>
+    value === null || value === undefined ? null : num(value);
+
   return (data ?? []).map((row) => {
-    const warn = row.warn_percentage as number | string | null;
+    const warn = opcional(row.warn_percentage);
+    const warnBelow = opcional(row.warn_below_percentage);
     return {
       scope: row.scope as RiskLimit["scope"],
       scopeKey: (row.scope_key as string | null) ?? null,
-      maxPercentage: num(row.max_percentage),
-      // Nulo no banco significa "usar o padrão de 90% do teto", não zero — por
-      // isso a coluna não pode passar por num(), que converteria null em 0 e
-      // deixaria todo limite permanentemente amarelo.
-      ...(warn === null || warn === undefined ? {} : { warnPercentage: num(warn) }),
+      maxPercentage: opcional(row.max_percentage),
+      ...(warn === null ? {} : { warnPercentage: warn }),
+      ...(warnBelow === null ? {} : { warnBelowPercentage: warnBelow }),
       exemptAssetTypes: (row.exempt_asset_types as string[] | null) ?? [],
     };
   });

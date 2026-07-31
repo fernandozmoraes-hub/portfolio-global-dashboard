@@ -116,35 +116,51 @@ begin
   -- CORE tem faixa de atenção explícita (5,00%–5,50%): oscilação de preço não
   -- deve virar ordem de venda. DEFENSIVE isenta o Tesouro — teto individual
   -- mede risco de emissor único, e soberano é monitorado por outros recortes.
+  -- Teto individual e teto de bloco medem coisas diferentes: nenhum ativo
+  -- defensivo isolado chega a 3% e ainda assim o bloco pode passar de 60% da
+  -- carteira. Por isso os escopos SINGLE_ASSET e RISK_BUCKET convivem.
+  --
+  -- CASH é o único com piso e sem teto: o risco de caixa é faltar, não sobrar.
   insert into risk_limits (
     id, user_id, scope, scope_key,
-    max_percentage, warn_percentage, exempt_asset_types, description
+    max_percentage, warn_percentage, warn_below_percentage,
+    exempt_asset_types, description
   )
   select md5(v_user::text || 'limit:' || l.scope || ':' || coalesce(l.key, '*'))::uuid,
-         v_user, l.scope::risk_limit_scope, l.key, l.pct, l.warn, l.exempt, l.descr
+         v_user, l.scope::risk_limit_scope, l.key,
+         l.pct, l.warn, l.floor_, l.exempt, l.descr
   from (values
-    ('SINGLE_ASSET', 'CORE',        5.50,  5.00::numeric, '{}'::text[],
+    ('SINGLE_ASSET', 'CORE',        5.50::numeric,  5.00::numeric, null::numeric, '{}'::text[],
      'Ação core: atenção a partir de 5%, violação acima de 5,5%'),
-    ('SINGLE_ASSET', 'GROWTH',      3.00,  null,          '{}'::text[],
+    ('SINGLE_ASSET', 'GROWTH',      3.00,  null,  null, '{}'::text[],
      'Growth individual: máximo 3%'),
-    ('SINGLE_ASSET', 'SATELLITE',   2.00,  null,          '{}'::text[],
+    ('SINGLE_ASSET', 'SATELLITE',   2.00,  null,  null, '{}'::text[],
      'Satélite individual: máximo 2%'),
-    ('SINGLE_ASSET', 'ASYMMETRIC',  0.50,  null,          '{}'::text[],
+    ('SINGLE_ASSET', 'ASYMMETRIC',  0.50,  null,  null, '{}'::text[],
      'Posição assimétrica: máximo 0,50%'),
-    ('SINGLE_ASSET', 'DEFENSIVE',   3.00,  null,          '{TESOURO_DIRETO}'::text[],
+    ('SINGLE_ASSET', 'DEFENSIVE',   3.00,  null,  null, '{TESOURO_DIRETO}'::text[],
      'Defensiva individual: máximo 3%; Tesouro Direto isento'),
-    ('SECTOR',       null,         25.00,  null,          '{}'::text[],
+    ('RISK_BUCKET',  'DEFENSIVE',  65.00, 60.00,  null, '{}'::text[],
+     'Bloco defensivo: desejável até 60%, atenção de 60% a 65%, hard limit 65%'),
+    ('RISK_BUCKET',  'SATELLITE',  15.00, 12.00,  null, '{}'::text[],
+     'Bloco satélite: desejável até 12%, atenção de 12% a 15%, hard limit 15%'),
+    ('RISK_BUCKET',  'ASYMMETRIC',  3.00,  2.00,  null, '{}'::text[],
+     'Bloco assimétrico: desejável até 2%, atenção de 2% a 3%, hard limit 3%'),
+    ('RISK_BUCKET',  'CASH',        null,  null,  2.00, '{}'::text[],
+     'Bloco caixa: piso de vigilância de 2%; sem teto — o risco de caixa é faltar'),
+    ('SECTOR',       null,         25.00,  null,  null, '{}'::text[],
      'Concentração máxima por setor'),
-    ('COUNTRY',      'BR',         70.00,  null,          '{}'::text[],
+    ('COUNTRY',      'BR',         70.00,  null,  null, '{}'::text[],
      'Concentração máxima em Brasil'),
-    ('CURRENCY',     'BRL',        75.00,  null,          '{}'::text[],
+    ('CURRENCY',     'BRL',        75.00,  null,  null, '{}'::text[],
      'Exposição máxima a BRL')
-  ) as l(scope, key, pct, warn, exempt, descr)
+  ) as l(scope, key, pct, warn, floor_, exempt, descr)
   on conflict (id) do update set
-    max_percentage     = excluded.max_percentage,
-    warn_percentage    = excluded.warn_percentage,
-    exempt_asset_types = excluded.exempt_asset_types,
-    description        = excluded.description;
+    max_percentage        = excluded.max_percentage,
+    warn_percentage       = excluded.warn_percentage,
+    warn_below_percentage = excluded.warn_below_percentage,
+    exempt_asset_types    = excluded.exempt_asset_types,
+    description           = excluded.description;
 
   -- ---------------------------------------------------------------------------
   -- Benchmarks (valores mensais entram manualmente no MVP)

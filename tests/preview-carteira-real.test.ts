@@ -80,6 +80,25 @@ const LIMITES: RiskLimit[] = [
   { scope: "SECTOR", scopeKey: null, maxPercentage: 25 },
   { scope: "COUNTRY", scopeKey: "BR", maxPercentage: 70 },
   { scope: "CURRENCY", scopeKey: "BRL", maxPercentage: 75 },
+
+  // ---------------------------------------------------------------------------
+  // Tetos AGREGADOS por bucket.
+  //
+  // Teto individual e teto de bloco medem coisas diferentes. Nenhum ativo
+  // defensivo isolado chega a 3%, e ainda assim o bloco defensivo é 60% da
+  // carteira — só o limite agregado enxerga isso.
+  //
+  // CASH é o único com piso: o risco de caixa é faltar, não sobrar. Abaixo de
+  // 2% a carteira fica sem colchão para resgate e sem munição para
+  // oportunidade, e nenhum teto detectaria isso.
+  //
+  // As bandas de ALOCAÇÃO por classe (POLITICA) seguem sendo orientação, não
+  // obrigação de comprar até o teto — por isso não geram alerta.
+  // ---------------------------------------------------------------------------
+  { scope: "RISK_BUCKET", scopeKey: "DEFENSIVE", maxPercentage: 65, warnPercentage: 60 },
+  { scope: "RISK_BUCKET", scopeKey: "SATELLITE", maxPercentage: 15, warnPercentage: 12 },
+  { scope: "RISK_BUCKET", scopeKey: "ASYMMETRIC", maxPercentage: 3, warnPercentage: 2 },
+  { scope: "RISK_BUCKET", scopeKey: "CASH", maxPercentage: null, warnBelowPercentage: 2 },
 ];
 
 /**
@@ -220,6 +239,39 @@ describe("PREVIEW v2 — carteira real 30/07/2026", () => {
     expect(total).toBeGreaterThan(900_000);
   });
 
+  /**
+   * PARIDADE — critério de aceite da Entrega 2.6 (migração para Lovable Cloud).
+   *
+   * Estes números congelam o estado aprovado da Entrega 2.5. A migração
+   * preserva schema, migrations, RLS, domínio, testes e carteira real; se
+   * qualquer um destes valores mudar, a paridade quebrou e a migração não
+   * pode ser aceita.
+   *
+   * As tolerâncias existem só para arredondamento de centavos — não para
+   * absorver diferença de resultado.
+   */
+  it("paridade congelada da Entrega 2.5", () => {
+    expect(registros.length).toBe(95);
+    expect(current.positions.length).toBe(95);
+    expect(exposures.length).toBe(90);
+    expect(current.sources.length).toBe(8);
+    expect(total).toBeCloseTo(974_877, -1);
+
+    const alertas = evaluateRiskLimits(exposures, LIMITES, tiposPorAtivo, setorCanonico);
+    const assinatura = alertas
+      .map((a) => `${a.scope}:${a.scopeKey}:${a.severity}:${a.direction}`)
+      .sort();
+
+    expect(assinatura).toEqual([
+      "COUNTRY:BR:VIOLACAO:TETO",
+      "CURRENCY:BRL:ATENCAO:TETO",
+      "RISK_BUCKET:CASH:ATENCAO:PISO",
+      "RISK_BUCKET:DEFENSIVE:ATENCAO:TETO",
+      "RISK_BUCKET:SATELLITE:ATENCAO:TETO",
+      "SINGLE_ASSET:CORE:ATENCAO:TETO",
+    ]);
+  });
+
   it("freshness com limiares por tipo", () => {
     log("\n═══ FRESHNESS (limiar por tipo de fonte) ═══");
     for (const s of current.sources) {
@@ -261,12 +313,13 @@ describe("PREVIEW v2 — carteira real 30/07/2026", () => {
     const alertas = evaluateRiskLimits(exposures, LIMITES, tiposPorAtivo, setorCanonico);
     if (alertas.length === 0) log("(nenhum)");
     for (const a of alertas) {
-      const faixa = `atenção ≥ ${pct(a.warnPercentage)} · teto ${pct(a.maxPercentage)}`;
-      const excesso =
-        a.severity === "VIOLACAO"
-          ? `   excesso ${brl(Math.max(0, a.excessBRL))}`
-          : "";
-      log(`${a.severity === "VIOLACAO" ? "🔴" : "🟡"} ${a.scope.padEnd(13)} ${(a.scopeKey === a.subject ? a.subject : `${a.subject} [${a.scopeKey}]`).padEnd(32)} ${pct(a.currentPercentage).padStart(7)}   ${faixa}${excesso}`);
+      const faixa =
+        a.direction === "PISO"
+          ? `piso de vigilância ${pct(a.warnPercentage)} — faltam ${brl(Math.abs(a.excessBRL))}`
+          : `atenção ≥ ${pct(a.warnPercentage)} · teto ${a.limitPercentage === null ? "—" : pct(a.limitPercentage)}` +
+            (a.severity === "VIOLACAO" ? `   excesso ${brl(a.excessBRL)}` : "");
+      const icone = a.severity === "VIOLACAO" ? "🔴" : a.direction === "PISO" ? "🔵" : "🟡";
+      log(`${icone} ${a.scope.padEnd(13)} ${(a.scopeKey === a.subject ? a.subject : `${a.subject} [${a.scopeKey}]`).padEnd(32)} ${pct(a.currentPercentage).padStart(7)}   ${faixa}`);
     }
 
     log("\n═══ EXPOSIÇÃO SOBERANA (monitorada por recorte, não por teto) ═══");
@@ -279,12 +332,15 @@ describe("PREVIEW v2 — carteira real 30/07/2026", () => {
     expect(alertas.length).toBeGreaterThanOrEqual(0);
   });
 
-  it("buckets × teto individual", () => {
+  it("buckets × teto individual e agregado", () => {
     const TETO: Partial<Record<RiskBucket, RiskLimit>> = Object.fromEntries(
       LIMITES.filter((l) => l.scope === "SINGLE_ASSET").map((l) => [l.scopeKey, l]),
     );
+    const BLOCO: Partial<Record<RiskBucket, RiskLimit>> = Object.fromEntries(
+      LIMITES.filter((l) => l.scope === "RISK_BUCKET").map((l) => [l.scopeKey, l]),
+    );
 
-    log("\n═══ RISK BUCKETS × TETO INDIVIDUAL ═══");
+    log("\n═══ RISK BUCKETS × LIMITES ═══");
     const porBucket = new Map<RiskBucket, typeof exposures>();
     for (const e of exposures) {
       const atual = porBucket.get(e.riskBucket) ?? [];
@@ -303,12 +359,37 @@ describe("PREVIEW v2 — carteira real 30/07/2026", () => {
       if (lista.length === 0) continue;
 
       const soma = lista.reduce((a, e) => a + e.valueBRL, 0);
+      const peso = (soma / total) * 100;
       const limite = TETO[bucket];
-      const teto = limite
-        ? `teto individual ${pct(limite.maxPercentage)}${limite.warnPercentage !== undefined ? ` (atenção ≥ ${pct(limite.warnPercentage)})` : ""}${limite.exemptAssetTypes?.length ? ` · isento: ${limite.exemptAssetTypes.join(", ")}` : ""}`
-        : "sem teto individual";
+      const teto =
+        limite && limite.maxPercentage !== null
+          ? `teto individual ${pct(limite.maxPercentage)}${limite.warnPercentage !== undefined ? ` (atenção ≥ ${pct(limite.warnPercentage)})` : ""}${limite.exemptAssetTypes?.length ? ` · isento: ${limite.exemptAssetTypes.join(", ")}` : ""}`
+          : "sem teto individual";
 
-      log(`\n▸ ${RISK_BUCKET_LABELS[bucket].toUpperCase().padEnd(16)} ${brl(soma).padStart(13)}  ${pct((soma / total) * 100).padStart(7)}  ${String(lista.length).padStart(2)} ativos  —  ${teto}`);
+      log(`\n▸ ${RISK_BUCKET_LABELS[bucket].toUpperCase().padEnd(16)} ${brl(soma).padStart(13)}  ${pct(peso).padStart(7)}  ${String(lista.length).padStart(2)} ativos  —  ${teto}`);
+
+      const bloco = BLOCO[bucket];
+      if (bloco) {
+        const faixa =
+          bloco.maxPercentage === null
+            ? `piso de vigilância ${pct(bloco.warnBelowPercentage ?? 0)}`
+            : `desejável até ${pct(bloco.warnPercentage ?? 0)} · atenção ${pct(bloco.warnPercentage ?? 0)}–${pct(bloco.maxPercentage)} · hard limit ${pct(bloco.maxPercentage)}`;
+        const abaixoDoPiso =
+          bloco.warnBelowPercentage !== undefined && peso < bloco.warnBelowPercentage;
+        const acimaDoTeto = bloco.maxPercentage !== null && peso > bloco.maxPercentage;
+        const emAtencao =
+          !acimaDoTeto &&
+          bloco.warnPercentage !== undefined &&
+          peso >= bloco.warnPercentage;
+        const estado = acimaDoTeto
+          ? "🔴 acima do hard limit"
+          : abaixoDoPiso
+            ? "🔵 abaixo do piso"
+            : emAtencao
+              ? "🟡 em atenção"
+              : "🟢 dentro da faixa desejável";
+        log(`   bloco: ${faixa}  →  ${estado}`);
+      }
 
       // Isentos não têm teto individual: não devem aparecer como "maior
       // posição" de um limite que não se aplica a eles.
@@ -317,15 +398,16 @@ describe("PREVIEW v2 — carteira real 30/07/2026", () => {
       );
 
       // Só os que chegam perto do teto interessam; o resto é ruído de relatório.
+      const tetoMax = limite?.maxPercentage ?? null;
       const relevantes = sujeitos.filter((e) => {
-        if (!limite) return false;
+        if (tetoMax === null) return false;
         const p = (e.valueBRL / total) * 100;
-        return p >= (limite.warnPercentage ?? limite.maxPercentage * 0.9);
+        return p >= (limite!.warnPercentage ?? tetoMax * 0.9);
       });
 
       if (relevantes.length === 0) {
         const maior = sujeitos[0];
-        const sufixo = limite ? " — nenhuma na faixa de atenção" : "";
+        const sufixo = tetoMax !== null ? " — nenhuma na faixa de atenção" : "";
         log(
           maior
             ? `   maior posição sujeita ao teto: ${maior.ticker} ${pct((maior.valueBRL / total) * 100)}${sufixo}`
@@ -335,7 +417,7 @@ describe("PREVIEW v2 — carteira real 30/07/2026", () => {
       }
       for (const e of relevantes) {
         const p = (e.valueBRL / total) * 100;
-        const flag = p > limite!.maxPercentage ? "🔴" : "🟡";
+        const flag = p > tetoMax! ? "🔴" : "🟡";
         log(`   ${flag} ${e.ticker.padEnd(22)} ${brl(e.valueBRL).padStart(13)}  ${pct(p).padStart(7)}`);
       }
     }

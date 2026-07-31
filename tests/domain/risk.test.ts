@@ -60,7 +60,7 @@ describe("limites avaliados sobre a exposição consolidada", () => {
     expect(googl).toBeDefined();
     expect(googl!.severity).toBe("VIOLACAO");
     expect(googl!.currentPercentage).toBeCloseTo(6, 2);
-    expect(googl!.maxPercentage).toBe(5);
+    expect(googl!.limitPercentage).toBe(5);
     expect(googl!.excessPercentagePoints).toBeCloseTo(1, 2);
     // Excesso em R$: 60.000 − 5% de 1.000.000 = 10.000
     expect(googl!.excessBRL).toBeCloseTo(10_000, 2);
@@ -155,7 +155,7 @@ describe("faixa de atenção explícita (ruído de mercado × rebalanceamento)",
     expect(alvo!.severity).toBe("ATENCAO");
     expect(alvo!.currentPercentage).toBeCloseTo(5.2, 4);
     expect(alvo!.warnPercentage).toBe(5);
-    expect(alvo!.maxPercentage).toBe(5.5);
+    expect(alvo!.limitPercentage).toBe(5.5);
   });
 
   it("vira violação apenas acima do teto", () => {
@@ -286,5 +286,145 @@ describe("concentração por dimensão", () => {
 
   it("carteira vazia não gera alerta", () => {
     expect(evaluateRiskLimits([], LIMITES)).toEqual([]);
+  });
+});
+
+describe("limites agregados por bucket", () => {
+  // Faixa desejável, atenção e hard limit são três coisas distintas. O teto
+  // individual não enxerga bloco: nenhum defensivo isolado passa de 3% e ainda
+  // assim o bloco pode ser 62% da carteira.
+  const BLOCOS: RiskLimit[] = [
+    { scope: "RISK_BUCKET", scopeKey: "DEFENSIVE", maxPercentage: 65, warnPercentage: 60 },
+    { scope: "RISK_BUCKET", scopeKey: "SATELLITE", maxPercentage: 15, warnPercentage: 12 },
+    { scope: "RISK_BUCKET", scopeKey: "CASH", maxPercentage: null, warnBelowPercentage: 2 },
+  ];
+
+  /** Carteira com pesos exatos por bucket, cada bucket em um único ativo. */
+  function carteiraPorBucket(pesos: Partial<Record<RiskBucket, number>>) {
+    const posicoes = Object.entries(pesos).map(([bucket, peso]) =>
+      pos(bucket.toLowerCase(), peso! * 10_000, {
+        assetId: bucket.toLowerCase(),
+        riskBucket: bucket as RiskBucket,
+      }),
+    );
+    return consolidatePositions(posicoes, {});
+  }
+
+  it("não alerta dentro da faixa desejável", () => {
+    const alertas = evaluateRiskLimits(
+      carteiraPorBucket({ DEFENSIVE: 55, SATELLITE: 10, CASH: 35 }),
+      BLOCOS,
+    );
+    expect(alertas).toEqual([]);
+  });
+
+  it("acusa atenção entre o desejável e o hard limit", () => {
+    const alertas = evaluateRiskLimits(
+      carteiraPorBucket({ DEFENSIVE: 62, SATELLITE: 5, CASH: 33 }),
+      BLOCOS,
+    );
+    const def = alertas.find((a) => a.scopeKey === "DEFENSIVE");
+
+    expect(def!.severity).toBe("ATENCAO");
+    expect(def!.direction).toBe("TETO");
+    expect(def!.currentPercentage).toBeCloseTo(62, 4);
+    expect(def!.warnPercentage).toBe(60);
+    expect(def!.limitPercentage).toBe(65);
+  });
+
+  it("acusa violação acima do hard limit, com o excesso em R$", () => {
+    const alertas = evaluateRiskLimits(
+      carteiraPorBucket({ DEFENSIVE: 70, SATELLITE: 5, CASH: 25 }),
+      BLOCOS,
+    );
+    const def = alertas.find((a) => a.scopeKey === "DEFENSIVE");
+
+    expect(def!.severity).toBe("VIOLACAO");
+    // 70% de 1.000.000 = 700.000; hard limit de 65% = 650.000
+    expect(def!.excessBRL).toBeCloseTo(50_000, 2);
+    expect(def!.excessPercentagePoints).toBeCloseTo(5, 4);
+  });
+
+  it("bloco e ativo individual são limites independentes", () => {
+    // Cada satélite tem 3% — dentro de qualquer teto individual razoável —,
+    // mas o bloco soma 18% e estoura o hard limit de 15%.
+    const posicoes = Array.from({ length: 6 }, (_, i) =>
+      pos(`sat${i}`, 30_000, { assetId: `sat${i}`, riskBucket: "SATELLITE" }),
+    ).concat(pos("resto", 820_000, { assetId: "resto", riskBucket: "DEFENSIVE" }));
+
+    const alertas = evaluateRiskLimits(consolidatePositions(posicoes, {}), [
+      { scope: "SINGLE_ASSET", scopeKey: "SATELLITE", maxPercentage: 5 },
+      ...BLOCOS,
+    ]);
+
+    expect(alertas.filter((a) => a.scope === "SINGLE_ASSET")).toEqual([]);
+    expect(alertas.find((a) => a.scopeKey === "SATELLITE")!.severity).toBe("VIOLACAO");
+  });
+});
+
+describe("piso de vigilância (o risco de caixa é faltar, não sobrar)", () => {
+  const PISO_CAIXA: RiskLimit[] = [
+    { scope: "RISK_BUCKET", scopeKey: "CASH", maxPercentage: null, warnBelowPercentage: 2 },
+  ];
+
+  it("alerta quando o bucket fica abaixo do piso", () => {
+    const posicoes = [
+      pos("caixa", 5_000, { assetId: "caixa", riskBucket: "CASH" }),
+      pos("resto", 995_000, { assetId: "resto", riskBucket: "DEFENSIVE" }),
+    ];
+
+    const alertas = evaluateRiskLimits(consolidatePositions(posicoes, {}), PISO_CAIXA);
+    const caixa = alertas.find((a) => a.scopeKey === "CASH");
+
+    expect(caixa!.severity).toBe("ATENCAO");
+    expect(caixa!.direction).toBe("PISO");
+    expect(caixa!.currentPercentage).toBeCloseTo(0.5, 4);
+    expect(caixa!.warnPercentage).toBe(2);
+    // Sem hard limit do lado do piso: alerta, nunca vira violação.
+    expect(caixa!.limitPercentage).toBeNull();
+    // Faltam 20.000 − 5.000 = 15.000 para alcançar 2% de 1.000.000.
+    expect(caixa!.excessBRL).toBeCloseTo(-15_000, 2);
+    expect(caixa!.excessPercentagePoints).toBeCloseTo(-1.5, 4);
+  });
+
+  it("alerta também quando o bucket não existe na carteira", () => {
+    // Bucket ausente é 0%, não "sem informação". Se o alerta dependesse de
+    // haver algum ativo em caixa, a carteira sem caixa nenhum ficaria calada
+    // — exatamente o caso que o piso existe para pegar.
+    const posicoes = [pos("resto", 1_000_000, { assetId: "resto", riskBucket: "DEFENSIVE" })];
+
+    const alertas = evaluateRiskLimits(consolidatePositions(posicoes, {}), PISO_CAIXA);
+    const caixa = alertas.find((a) => a.scopeKey === "CASH");
+
+    expect(caixa!.severity).toBe("ATENCAO");
+    expect(caixa!.direction).toBe("PISO");
+    expect(caixa!.currentPercentage).toBe(0);
+    expect(caixa!.excessBRL).toBeCloseTo(-20_000, 2);
+  });
+
+  it("cala quando o piso é atendido", () => {
+    const posicoes = [
+      pos("caixa", 30_000, { assetId: "caixa", riskBucket: "CASH" }),
+      pos("resto", 970_000, { assetId: "resto", riskBucket: "DEFENSIVE" }),
+    ];
+
+    expect(
+      evaluateRiskLimits(consolidatePositions(posicoes, {}), PISO_CAIXA),
+    ).toEqual([]);
+  });
+
+  it("não aplica piso a ativo individual", () => {
+    // Um piso por ativo acusaria toda posição pequena da carteira. Só faz
+    // sentido em escopo agregado.
+    const posicoes = [
+      pos("mini", 1_000, { assetId: "mini", riskBucket: "SATELLITE" }),
+      pos("resto", 999_000, { assetId: "resto", riskBucket: "DEFENSIVE" }),
+    ];
+
+    const alertas = evaluateRiskLimits(consolidatePositions(posicoes, {}), [
+      { scope: "SINGLE_ASSET", scopeKey: "SATELLITE", maxPercentage: 2, warnBelowPercentage: 1 },
+    ]);
+
+    expect(alertas).toEqual([]);
   });
 });

@@ -26,10 +26,15 @@ export interface RiskLimit {
   readonly scope: RiskLimitScope;
   /** Chave do escopo: bucket, setor, país, moeda ou asset_type. `null` = todos. */
   readonly scopeKey: string | null;
-  /** Teto em % da carteira global (0-100). Acima disso é VIOLAÇÃO. */
-  readonly maxPercentage: number;
   /**
-   * Início da faixa de atenção, em %.
+   * Teto em % da carteira global (0-100). Acima disso é VIOLAÇÃO.
+   *
+   * `null` quando o limite só tem lado de piso — caixa, por exemplo, não tem
+   * teto de risco: o problema com caixa é faltar, não sobrar.
+   */
+  readonly maxPercentage: number | null;
+  /**
+   * Início da faixa de atenção abaixo do teto, em %.
    *
    * Existe para separar ruído de mercado de decisão de rebalanceamento: uma
    * ação core que oscila de 4,9% para 5,1% não deveria virar violação e
@@ -39,6 +44,18 @@ export interface RiskLimit {
    * Ausente: usa 90% do teto como padrão.
    */
   readonly warnPercentage?: number;
+  /**
+   * Piso de vigilância, em %. Abaixo disso o alerta é de SUBEXPOSIÇÃO.
+   *
+   * Nem todo risco é excesso. Um bucket de caixa que seca deixa a carteira sem
+   * munição para oportunidade e sem colchão para resgate — é risco, e o teto
+   * nunca o detectaria.
+   *
+   * Só se aplica a escopos AGREGADOS (bucket, setor, país, moeda). Em
+   * SINGLE_ASSET é ignorado: um piso por ativo individual acusaria toda posição
+   * pequena da carteira, o que não é informação.
+   */
+  readonly warnBelowPercentage?: number;
   /**
    * Tipos de ativo aos quais o limite NÃO se aplica.
    *
@@ -50,18 +67,32 @@ export interface RiskLimit {
   readonly exemptAssetTypes?: readonly string[];
 }
 
+/** Lado da faixa que disparou o alerta. */
+export type RiskAlertDirection = "TETO" | "PISO";
+
 export interface RiskAlert {
   readonly scope: RiskLimitScope;
   readonly scopeKey: string;
   /** Identificação legível do que violou. */
   readonly subject: string;
   readonly currentPercentage: number;
-  readonly maxPercentage: number;
-  /** Início da faixa de atenção efetivamente aplicada. */
+  readonly direction: RiskAlertDirection;
+  /**
+   * Limiar duro do lado que disparou. `null` quando não existe — é o caso do
+   * piso de vigilância, que alerta mas nunca vira violação.
+   */
+  readonly limitPercentage: number | null;
+  /** Limiar de atenção efetivamente aplicado, do lado que disparou. */
   readonly warnPercentage: number;
-  /** Excesso em pontos percentuais. */
+  /**
+   * Distância até o limiar de referência, em pontos percentuais.
+   * Positivo = acima (excesso). Negativo = abaixo (falta).
+   */
   readonly excessPercentagePoints: number;
-  /** Quanto reduzir em R$ para voltar ao limite. */
+  /**
+   * Distância em R$. Positivo = quanto reduzir para voltar ao limite.
+   * Negativo = quanto falta aportar para alcançar o piso.
+   */
   readonly excessBRL: number;
   readonly severity: PolicySeverity;
 }
@@ -69,16 +100,70 @@ export interface RiskAlert {
 /** Fração do limite a partir da qual o alerta fica amarelo, se não houver warn. */
 const ATTENTION_THRESHOLD = 0.9;
 
-function severityFor(
-  current: number,
-  max: number,
-  warn?: number,
-): PolicySeverity | null {
-  if (max <= 0) return current > 0 ? "VIOLACAO" : null;
-  if (current > max) return "VIOLACAO";
-  const threshold = warn ?? max * ATTENTION_THRESHOLD;
-  if (current >= threshold) return "ATENCAO";
+interface Trigger {
+  readonly severity: PolicySeverity;
+  readonly direction: RiskAlertDirection;
+  /** Limiar de atenção do lado disparado. */
+  readonly warn: number;
+  /** Limiar duro do lado disparado, se houver. */
+  readonly hard: number | null;
+}
+
+/**
+ * Decide se e por qual lado da faixa o limite disparou.
+ *
+ * O piso tem precedência sobre o teto: se a exposição está abaixo do piso de
+ * vigilância, o que importa reportar é a falta. Dizer ao mesmo tempo que há
+ * folga contra o teto seria ruído.
+ */
+function triggerFor(current: number, limit: RiskLimit): Trigger | null {
+  const floor = limit.warnBelowPercentage;
+  if (floor !== undefined && current < floor) {
+    return { severity: "ATENCAO", direction: "PISO", warn: floor, hard: null };
+  }
+
+  const max = limit.maxPercentage;
+  if (max === null || max === undefined) return null;
+
+  const warn = round4(limit.warnPercentage ?? max * ATTENTION_THRESHOLD);
+  if (max <= 0) {
+    return current > 0
+      ? { severity: "VIOLACAO", direction: "TETO", warn, hard: max }
+      : null;
+  }
+  if (current > max) {
+    return { severity: "VIOLACAO", direction: "TETO", warn, hard: max };
+  }
+  if (current >= warn) {
+    return { severity: "ATENCAO", direction: "TETO", warn, hard: max };
+  }
   return null;
+}
+
+/** Monta o alerta a partir do gatilho, com os sinais coerentes com o lado. */
+function buildAlert(
+  scope: RiskLimitScope,
+  scopeKey: string,
+  subject: string,
+  current: number,
+  valueBRL: number,
+  totalBRL: number,
+  trigger: Trigger,
+): RiskAlert {
+  // Contra o limiar duro quando ele existe; contra o piso quando não existe.
+  const referencia = trigger.hard ?? trigger.warn;
+  return {
+    scope,
+    scopeKey,
+    subject,
+    currentPercentage: current,
+    direction: trigger.direction,
+    limitPercentage: trigger.hard,
+    warnPercentage: trigger.warn,
+    excessPercentagePoints: round4(current - referencia),
+    excessBRL: round2(valueBRL - (totalBRL * referencia) / 100),
+    severity: trigger.severity,
+  };
 }
 
 /**
@@ -149,6 +234,8 @@ function checkSingleAsset(
 ): RiskAlert[] {
   const alerts: RiskAlert[] = [];
   const exempt = new Set(limit.exemptAssetTypes ?? []);
+  // Piso não se aplica a ativo individual: acusaria toda posição pequena.
+  const soTeto: RiskLimit = { ...limit, warnBelowPercentage: undefined };
 
   for (const exposure of exposures) {
     if (limit.scopeKey !== null && exposure.riskBucket !== limit.scopeKey) {
@@ -159,28 +246,33 @@ function checkSingleAsset(
     if (exempt.has(assetTypeById.get(exposure.assetId) ?? "")) continue;
 
     const current = round4((exposure.valueBRL / totalBRL) * 100);
-    const severity = severityFor(current, limit.maxPercentage, limit.warnPercentage);
-    if (severity === null) continue;
+    const trigger = triggerFor(current, soTeto);
+    if (trigger === null) continue;
 
-    alerts.push({
-      scope: "SINGLE_ASSET",
-      scopeKey: limit.scopeKey ?? exposure.riskBucket,
-      subject: exposure.ticker,
-      currentPercentage: current,
-      maxPercentage: limit.maxPercentage,
-      warnPercentage: limit.warnPercentage ?? round4(limit.maxPercentage * ATTENTION_THRESHOLD),
-      excessPercentagePoints: round4(current - limit.maxPercentage),
-      excessBRL: round2(
-        exposure.valueBRL - (totalBRL * limit.maxPercentage) / 100,
+    alerts.push(
+      buildAlert(
+        "SINGLE_ASSET",
+        limit.scopeKey ?? exposure.riskBucket,
+        exposure.ticker,
+        current,
+        exposure.valueBRL,
+        totalBRL,
+        trigger,
       ),
-      severity,
-    });
+    );
   }
 
   return alerts;
 }
 
-/** Teto para a soma de todos os ativos de um mesmo bucket. */
+/**
+ * Faixa para a soma de todos os ativos de um mesmo bucket.
+ *
+ * Diferente dos demais escopos, um bucket AUSENTE da carteira é informação: se
+ * a política pede um piso de caixa e não há nenhum ativo em caixa, a exposição
+ * é 0% e o alerta precisa disparar. Por isso o bucket alvo é avaliado mesmo
+ * quando `groupExposureBy` não produz grupo para ele.
+ */
 function checkBucketAggregate(
   exposures: readonly AssetExposure[],
   totalBRL: number,
@@ -189,23 +281,32 @@ function checkBucketAggregate(
   const groups = groupExposureBy<RiskBucket>(exposures, (e) => e.riskBucket);
   const alerts: RiskAlert[] = [];
 
-  for (const group of groups) {
-    if (limit.scopeKey !== null && group.key !== limit.scopeKey) continue;
+  const alvos =
+    limit.scopeKey === null
+      ? groups
+      : [
+          groups.find((g) => g.key === limit.scopeKey) ?? {
+            key: limit.scopeKey as RiskBucket,
+            weight: 0,
+            valueBRL: 0,
+          },
+        ];
 
-    const severity = severityFor(group.weight, limit.maxPercentage, limit.warnPercentage);
-    if (severity === null) continue;
+  for (const group of alvos) {
+    const trigger = triggerFor(group.weight, limit);
+    if (trigger === null) continue;
 
-    alerts.push({
-      scope: "RISK_BUCKET",
-      scopeKey: group.key,
-      subject: `Bucket ${group.key}`,
-      currentPercentage: group.weight,
-      maxPercentage: limit.maxPercentage,
-      warnPercentage: limit.warnPercentage ?? round4(limit.maxPercentage * ATTENTION_THRESHOLD),
-      excessPercentagePoints: round4(group.weight - limit.maxPercentage),
-      excessBRL: round2(group.valueBRL - (totalBRL * limit.maxPercentage) / 100),
-      severity,
-    });
+    alerts.push(
+      buildAlert(
+        "RISK_BUCKET",
+        group.key,
+        `Bucket ${group.key}`,
+        group.weight,
+        group.valueBRL,
+        totalBRL,
+        trigger,
+      ),
+    );
   }
 
   return alerts;
@@ -225,20 +326,20 @@ function checkDimension(
     if (group.key === "") continue; // dimensão não aplicável a este ativo
     if (limit.scopeKey !== null && group.key !== limit.scopeKey) continue;
 
-    const severity = severityFor(group.weight, limit.maxPercentage, limit.warnPercentage);
-    if (severity === null) continue;
+    const trigger = triggerFor(group.weight, limit);
+    if (trigger === null) continue;
 
-    alerts.push({
-      scope: limit.scope,
-      scopeKey: group.key,
-      subject: group.key,
-      currentPercentage: group.weight,
-      maxPercentage: limit.maxPercentage,
-      warnPercentage: limit.warnPercentage ?? round4(limit.maxPercentage * ATTENTION_THRESHOLD),
-      excessPercentagePoints: round4(group.weight - limit.maxPercentage),
-      excessBRL: round2(group.valueBRL - (totalBRL * limit.maxPercentage) / 100),
-      severity,
-    });
+    alerts.push(
+      buildAlert(
+        limit.scope,
+        group.key,
+        group.key,
+        group.weight,
+        group.valueBRL,
+        totalBRL,
+        trigger,
+      ),
+    );
   }
 
   return alerts;

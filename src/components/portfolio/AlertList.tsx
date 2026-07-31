@@ -36,7 +36,11 @@ export function AlertList({ alerts }: { alerts: readonly RiskAlert[] }) {
             <Badge
               variant={alert.severity === "VIOLACAO" ? "violation" : "attention"}
             >
-              {alert.severity === "VIOLACAO" ? "Fora do limite" : "Atenção"}
+              {alert.severity === "VIOLACAO"
+                ? "Fora do limite"
+                : alert.direction === "PISO"
+                  ? "Abaixo do piso"
+                  : "Atenção"}
             </Badge>
             <span className="truncate text-sm">
               <span className="text-[var(--muted-foreground)]">
@@ -46,10 +50,12 @@ export function AlertList({ alerts }: { alerts: readonly RiskAlert[] }) {
             </span>
           </div>
           <span className="tabular shrink-0 text-xs text-[var(--muted-foreground)]">
-            {formatPercent(alert.currentPercentage, 2)} de{" "}
-            {formatPercent(alert.maxPercentage, 2)} ·{" "}
-            {formatPercentagePoints(alert.excessPercentagePoints, 2)}
-            {alert.excessBRL > 0 ? ` · ${formatBRL(alert.excessBRL)}` : ""}
+            {formatPercent(alert.currentPercentage, 2)}{" "}
+            {alert.direction === "PISO"
+              ? `· piso ${formatPercent(alert.warnPercentage, 2)}`
+              : `de ${formatPercent(alert.limitPercentage ?? alert.warnPercentage, 2)}`}{" "}
+            · {formatPercentagePoints(alert.excessPercentagePoints, 2)}
+            {alert.excessBRL !== 0 ? ` · ${formatBRL(Math.abs(alert.excessBRL))}` : ""}
           </span>
         </li>
       ))}
