@@ -120,6 +120,118 @@ describe("limites avaliados sobre a exposição consolidada", () => {
   });
 });
 
+describe("faixa de atenção explícita (ruído de mercado × rebalanceamento)", () => {
+  // Política do gestor para ações core: atenção a partir de 5,00%, violação
+  // só acima de 5,50%. Sem essa banda, uma posição que oscila em torno de 5%
+  // alternaria entre verde e vermelho a cada pregão.
+  const CORE_COM_BANDA: RiskLimit[] = [
+    { scope: "SINGLE_ASSET", scopeKey: "CORE", maxPercentage: 5.5, warnPercentage: 5 },
+  ];
+
+  function carteira(valorDoAtivo: number) {
+    return consolidatePositions(
+      [
+        pos("alvo", valorDoAtivo, { assetId: "alvo", riskBucket: "CORE" }),
+        pos("resto", 1_000_000 - valorDoAtivo, {
+          assetId: "resto",
+          riskBucket: "DEFENSIVE",
+        }),
+      ],
+      {},
+    );
+  }
+
+  it("fica silencioso abaixo do início da faixa", () => {
+    // 4,90% — abaixo de 5,00%. Com o padrão de 90% do teto (4,95%) isso já
+    // seria amarelo; a banda explícita é justamente o que evita esse ruído.
+    const alertas = evaluateRiskLimits(carteira(49_000), CORE_COM_BANDA);
+    expect(alertas.find((a) => a.subject === "ALVO")).toBeUndefined();
+  });
+
+  it("emite atenção dentro da faixa, sem tratar como violação", () => {
+    const alertas = evaluateRiskLimits(carteira(52_000), CORE_COM_BANDA);
+    const alvo = alertas.find((a) => a.subject === "ALVO");
+
+    expect(alvo!.severity).toBe("ATENCAO");
+    expect(alvo!.currentPercentage).toBeCloseTo(5.2, 4);
+    expect(alvo!.warnPercentage).toBe(5);
+    expect(alvo!.maxPercentage).toBe(5.5);
+  });
+
+  it("vira violação apenas acima do teto", () => {
+    const alertas = evaluateRiskLimits(carteira(56_000), CORE_COM_BANDA);
+    const alvo = alertas.find((a) => a.subject === "ALVO");
+
+    expect(alvo!.severity).toBe("VIOLACAO");
+    expect(alvo!.currentPercentage).toBeCloseTo(5.6, 4);
+    // Excesso em R$: 56.000 − 5,5% de 1.000.000 = 1.000
+    expect(alvo!.excessBRL).toBeCloseTo(1_000, 2);
+  });
+
+  it("sem warn declarado, mantém o padrão de 90% do teto", () => {
+    const semBanda: RiskLimit[] = [
+      { scope: "SINGLE_ASSET", scopeKey: "CORE", maxPercentage: 5.5 },
+    ];
+    // 4,90% fica abaixo do padrão de 4,95% e não alerta; 5,00% já alerta.
+    expect(
+      evaluateRiskLimits(carteira(49_000), semBanda).find((a) => a.subject === "ALVO"),
+    ).toBeUndefined();
+
+    const alvo = evaluateRiskLimits(carteira(50_000), semBanda).find(
+      (a) => a.subject === "ALVO",
+    );
+    expect(alvo!.severity).toBe("ATENCAO");
+    expect(alvo!.warnPercentage).toBeCloseTo(4.95, 4);
+  });
+});
+
+describe("isenção por tipo de ativo", () => {
+  const DEFENSIVA: RiskLimit[] = [
+    {
+      scope: "SINGLE_ASSET",
+      scopeKey: "DEFENSIVE",
+      maxPercentage: 3,
+      exemptAssetTypes: ["TESOURO_DIRETO"],
+    },
+  ];
+
+  const posicoes = [
+    pos("ntnb", 180_000, { assetId: "ntnb", riskBucket: "DEFENSIVE" }),
+    pos("fii", 40_000, { assetId: "fii", riskBucket: "DEFENSIVE" }),
+    pos("resto", 780_000, { assetId: "resto", riskBucket: "CORE" }),
+  ];
+
+  const tipos = new Map([
+    ["ntnb", "TESOURO_DIRETO"],
+    ["fii", "FII"],
+    ["resto", "ACAO"],
+  ]);
+
+  it("não aplica teto individual ao tipo isento", () => {
+    const alertas = evaluateRiskLimits(
+      consolidatePositions(posicoes, {}),
+      DEFENSIVA,
+      tipos,
+    );
+
+    // 18% da carteira num único NTN-B e nenhum alerta: concentração soberana
+    // é monitorada por classe, emissor, duration e vencimento — não por teto.
+    expect(alertas.find((a) => a.subject === "NTNB")).toBeUndefined();
+  });
+
+  it("continua aplicando o teto aos demais ativos do mesmo bucket", () => {
+    const alertas = evaluateRiskLimits(
+      consolidatePositions(posicoes, {}),
+      DEFENSIVA,
+      tipos,
+    );
+    const fii = alertas.find((a) => a.subject === "FII");
+
+    expect(fii!.severity).toBe("VIOLACAO");
+    expect(fii!.currentPercentage).toBeCloseTo(4, 4);
+  });
+});
+
 describe("concentração por dimensão", () => {
   it("acusa concentração setorial acima do teto", () => {
     const posicoes = [

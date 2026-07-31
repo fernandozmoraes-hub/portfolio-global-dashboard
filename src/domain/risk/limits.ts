@@ -26,8 +26,19 @@ export interface RiskLimit {
   readonly scope: RiskLimitScope;
   /** Chave do escopo: bucket, setor, país, moeda ou asset_type. `null` = todos. */
   readonly scopeKey: string | null;
-  /** Teto em % da carteira global (0-100). */
+  /** Teto em % da carteira global (0-100). Acima disso é VIOLAÇÃO. */
   readonly maxPercentage: number;
+  /**
+   * Início da faixa de atenção, em %.
+   *
+   * Existe para separar ruído de mercado de decisão de rebalanceamento: uma
+   * ação core que oscila de 4,9% para 5,1% não deveria virar violação e
+   * disparar uma venda. Com warn=5,0 e max=5,5, a faixa entre os dois é
+   * amarela — monitorar, não agir.
+   *
+   * Ausente: usa 90% do teto como padrão.
+   */
+  readonly warnPercentage?: number;
   /**
    * Tipos de ativo aos quais o limite NÃO se aplica.
    *
@@ -46,6 +57,8 @@ export interface RiskAlert {
   readonly subject: string;
   readonly currentPercentage: number;
   readonly maxPercentage: number;
+  /** Início da faixa de atenção efetivamente aplicada. */
+  readonly warnPercentage: number;
   /** Excesso em pontos percentuais. */
   readonly excessPercentagePoints: number;
   /** Quanto reduzir em R$ para voltar ao limite. */
@@ -53,13 +66,18 @@ export interface RiskAlert {
   readonly severity: PolicySeverity;
 }
 
-/** Fração do limite a partir da qual o alerta fica amarelo. */
+/** Fração do limite a partir da qual o alerta fica amarelo, se não houver warn. */
 const ATTENTION_THRESHOLD = 0.9;
 
-function severityFor(current: number, max: number): PolicySeverity | null {
+function severityFor(
+  current: number,
+  max: number,
+  warn?: number,
+): PolicySeverity | null {
   if (max <= 0) return current > 0 ? "VIOLACAO" : null;
   if (current > max) return "VIOLACAO";
-  if (current >= max * ATTENTION_THRESHOLD) return "ATENCAO";
+  const threshold = warn ?? max * ATTENTION_THRESHOLD;
+  if (current >= threshold) return "ATENCAO";
   return null;
 }
 
@@ -141,7 +159,7 @@ function checkSingleAsset(
     if (exempt.has(assetTypeById.get(exposure.assetId) ?? "")) continue;
 
     const current = round4((exposure.valueBRL / totalBRL) * 100);
-    const severity = severityFor(current, limit.maxPercentage);
+    const severity = severityFor(current, limit.maxPercentage, limit.warnPercentage);
     if (severity === null) continue;
 
     alerts.push({
@@ -150,6 +168,7 @@ function checkSingleAsset(
       subject: exposure.ticker,
       currentPercentage: current,
       maxPercentage: limit.maxPercentage,
+      warnPercentage: limit.warnPercentage ?? round4(limit.maxPercentage * ATTENTION_THRESHOLD),
       excessPercentagePoints: round4(current - limit.maxPercentage),
       excessBRL: round2(
         exposure.valueBRL - (totalBRL * limit.maxPercentage) / 100,
@@ -173,7 +192,7 @@ function checkBucketAggregate(
   for (const group of groups) {
     if (limit.scopeKey !== null && group.key !== limit.scopeKey) continue;
 
-    const severity = severityFor(group.weight, limit.maxPercentage);
+    const severity = severityFor(group.weight, limit.maxPercentage, limit.warnPercentage);
     if (severity === null) continue;
 
     alerts.push({
@@ -182,6 +201,7 @@ function checkBucketAggregate(
       subject: `Bucket ${group.key}`,
       currentPercentage: group.weight,
       maxPercentage: limit.maxPercentage,
+      warnPercentage: limit.warnPercentage ?? round4(limit.maxPercentage * ATTENTION_THRESHOLD),
       excessPercentagePoints: round4(group.weight - limit.maxPercentage),
       excessBRL: round2(group.valueBRL - (totalBRL * limit.maxPercentage) / 100),
       severity,
@@ -205,7 +225,7 @@ function checkDimension(
     if (group.key === "") continue; // dimensão não aplicável a este ativo
     if (limit.scopeKey !== null && group.key !== limit.scopeKey) continue;
 
-    const severity = severityFor(group.weight, limit.maxPercentage);
+    const severity = severityFor(group.weight, limit.maxPercentage, limit.warnPercentage);
     if (severity === null) continue;
 
     alerts.push({
@@ -214,6 +234,7 @@ function checkDimension(
       subject: group.key,
       currentPercentage: group.weight,
       maxPercentage: limit.maxPercentage,
+      warnPercentage: limit.warnPercentage ?? round4(limit.maxPercentage * ATTENTION_THRESHOLD),
       excessPercentagePoints: round4(group.weight - limit.maxPercentage),
       excessBRL: round2(group.valueBRL - (totalBRL * limit.maxPercentage) / 100),
       severity,

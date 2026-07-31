@@ -17,7 +17,12 @@ import {
 import { evaluateRiskLimits, type RiskLimit } from "@/domain/risk/limits";
 import { deriveDimension } from "@/domain/exposure/derive";
 import { computeAllocation, type AllocationTarget } from "@/domain/allocation/gap";
-import { ASSET_CLASS_LABELS, type AssetClass } from "@/domain/shared/types";
+import {
+  ASSET_CLASS_LABELS,
+  RISK_BUCKET_LABELS,
+  type AssetClass,
+  type RiskBucket,
+} from "@/domain/shared/types";
 import type { FiiType, RateIndex } from "@/domain/exposure/derive";
 
 /**
@@ -25,10 +30,9 @@ import type { FiiType, RateIndex } from "@/domain/exposure/derive";
  * =======================================
  * Roda o DOMÍNIO REAL sobre o CSV, sem tocar no banco. Nenhuma carga é feita.
  *
- * ⚠️ `risk_bucket` e `investment_style` vieram VAZIOS no arquivo, por decisão
- * do gestor. Nada é preenchido automaticamente: as posições entram com o
- * marcador NAO_CLASSIFICADO e os limites que dependem de bucket ficam
- * explicitamente indisponíveis.
+ * `risk_bucket` foi preenchido pelo gestor (política de buckets). Nada é
+ * inferido automaticamente: o que não estiver na política do gestor permanece
+ * NAO_CLASSIFICADO. `investment_style` continua VAZIO por decisão do gestor.
  */
 
 const USDBRL = 5.1193;
@@ -45,17 +49,33 @@ const POLITICA: AllocationTarget[] = [
 ];
 
 /**
- * Sem risk_bucket, os tetos por bucket não podem ser avaliados. Aplica-se um
- * teto GLOBAL de 5% por ativo, ISENTANDO o Tesouro: teto individual mede risco
- * de emissor único, e concentrar em NTN-B não é o mesmo que concentrar numa
- * empresa. Soberano é monitorado por classe, emissor, duration e vencimento.
+ * Tetos individuais POR BUCKET, conforme a política do gestor.
+ *
+ * CORE tem faixa de atenção explícita (5,00%–5,50%) em vez do padrão de 90% do
+ * teto: uma posição core que oscila de 4,9% para 5,1% é ruído de mercado, não
+ * decisão de rebalanceamento. Só acima de 5,50% vira violação.
+ *
+ * TESOURO_DIRETO é isento do teto individual de DEFENSIVE: teto por ativo mede
+ * risco de emissor único, e concentrar em NTN-B não é o mesmo risco que
+ * concentrar numa empresa. Soberano é monitorado por classe, emissor, duration
+ * e vencimento.
+ *
+ * CASH não tem teto individual — caixa é resultado de decisão de liquidez, não
+ * de convicção; o controle dele é a banda de classe (0%–3% para Caixa BR).
+ *
+ * NAO_CLASSIFICADO não recebe teto: sem bucket definido pelo gestor, o sistema
+ * não inventa qual política aplicar.
  */
 const LIMITES: RiskLimit[] = [
+  { scope: "SINGLE_ASSET", scopeKey: "CORE", maxPercentage: 5.5, warnPercentage: 5 },
+  { scope: "SINGLE_ASSET", scopeKey: "GROWTH", maxPercentage: 3 },
+  { scope: "SINGLE_ASSET", scopeKey: "SATELLITE", maxPercentage: 2 },
+  { scope: "SINGLE_ASSET", scopeKey: "ASYMMETRIC", maxPercentage: 0.5 },
   {
     scope: "SINGLE_ASSET",
-    scopeKey: null,
-    maxPercentage: 5,
-    exemptAssetTypes: ["TESOURO_DIRETO", "CAIXA"],
+    scopeKey: "DEFENSIVE",
+    maxPercentage: 3,
+    exemptAssetTypes: ["TESOURO_DIRETO"],
   },
   { scope: "SECTOR", scopeKey: null, maxPercentage: 25 },
   { scope: "COUNTRY", scopeKey: "BR", maxPercentage: 70 },
@@ -123,8 +143,8 @@ const posicoes: DatedPosition[] = registros.map((r) => ({
   ticker: r.ticker!,
   assetName: r.asset_name!,
   assetClass: r.asset_class as AssetClass,
-  // NÃO classificado: preservado como veio, sem preenchimento automático.
-  riskBucket: (r.risk_bucket || "NAO_CLASSIFICADO") as never,
+  // Preservado como veio do gestor. Vazio permanece NAO_CLASSIFICADO.
+  riskBucket: (r.risk_bucket || "NAO_CLASSIFICADO") as RiskBucket,
   currency: r.currency as "BRL" | "USD",
   country: r.country!,
   sector: r.sector || null,
@@ -145,7 +165,7 @@ const setorCanonico = new Map(
         country: r.country!,
         currency: r.currency as "BRL" | "USD",
         rawSector: r.sector || null,
-        riskBucket: "CORE",
+        riskBucket: (r.risk_bucket || "NAO_CLASSIFICADO") as RiskBucket,
         investmentStyle: "NAO_APLICAVEL",
         indexador: (r.indexador || "NONE") as RateIndex,
         fiiType: (r.fii_type || "NAO_APLICAVEL") as FiiType,
@@ -241,7 +261,12 @@ describe("PREVIEW v2 — carteira real 30/07/2026", () => {
     const alertas = evaluateRiskLimits(exposures, LIMITES, tiposPorAtivo, setorCanonico);
     if (alertas.length === 0) log("(nenhum)");
     for (const a of alertas) {
-      log(`${a.severity === "VIOLACAO" ? "🔴" : "🟡"} ${a.scope.padEnd(13)} ${a.subject.padEnd(30)} ${pct(a.currentPercentage).padStart(7)} de ${pct(a.maxPercentage)}   excesso ${brl(Math.max(0, a.excessBRL))}`);
+      const faixa = `atenção ≥ ${pct(a.warnPercentage)} · teto ${pct(a.maxPercentage)}`;
+      const excesso =
+        a.severity === "VIOLACAO"
+          ? `   excesso ${brl(Math.max(0, a.excessBRL))}`
+          : "";
+      log(`${a.severity === "VIOLACAO" ? "🔴" : "🟡"} ${a.scope.padEnd(13)} ${(a.scopeKey === a.subject ? a.subject : `${a.subject} [${a.scopeKey}]`).padEnd(32)} ${pct(a.currentPercentage).padStart(7)}   ${faixa}${excesso}`);
     }
 
     log("\n═══ EXPOSIÇÃO SOBERANA (monitorada por recorte, não por teto) ═══");
@@ -254,9 +279,74 @@ describe("PREVIEW v2 — carteira real 30/07/2026", () => {
     expect(alertas.length).toBeGreaterThanOrEqual(0);
   });
 
+  it("buckets × teto individual", () => {
+    const TETO: Partial<Record<RiskBucket, RiskLimit>> = Object.fromEntries(
+      LIMITES.filter((l) => l.scope === "SINGLE_ASSET").map((l) => [l.scopeKey, l]),
+    );
+
+    log("\n═══ RISK BUCKETS × TETO INDIVIDUAL ═══");
+    const porBucket = new Map<RiskBucket, typeof exposures>();
+    for (const e of exposures) {
+      const atual = porBucket.get(e.riskBucket) ?? [];
+      porBucket.set(e.riskBucket, [...atual, e]);
+    }
+
+    const ordem: RiskBucket[] = [
+      "CORE", "GROWTH", "SATELLITE", "ASYMMETRIC",
+      "DEFENSIVE", "CASH", "NAO_CLASSIFICADO",
+    ];
+
+    for (const bucket of ordem) {
+      const lista = (porBucket.get(bucket) ?? [])
+        .slice()
+        .sort((a, b) => b.valueBRL - a.valueBRL);
+      if (lista.length === 0) continue;
+
+      const soma = lista.reduce((a, e) => a + e.valueBRL, 0);
+      const limite = TETO[bucket];
+      const teto = limite
+        ? `teto individual ${pct(limite.maxPercentage)}${limite.warnPercentage !== undefined ? ` (atenção ≥ ${pct(limite.warnPercentage)})` : ""}${limite.exemptAssetTypes?.length ? ` · isento: ${limite.exemptAssetTypes.join(", ")}` : ""}`
+        : "sem teto individual";
+
+      log(`\n▸ ${RISK_BUCKET_LABELS[bucket].toUpperCase().padEnd(16)} ${brl(soma).padStart(13)}  ${pct((soma / total) * 100).padStart(7)}  ${String(lista.length).padStart(2)} ativos  —  ${teto}`);
+
+      // Isentos não têm teto individual: não devem aparecer como "maior
+      // posição" de um limite que não se aplica a eles.
+      const sujeitos = lista.filter(
+        (e) => !(limite?.exemptAssetTypes ?? []).includes(tiposPorAtivo.get(e.assetId) ?? ""),
+      );
+
+      // Só os que chegam perto do teto interessam; o resto é ruído de relatório.
+      const relevantes = sujeitos.filter((e) => {
+        if (!limite) return false;
+        const p = (e.valueBRL / total) * 100;
+        return p >= (limite.warnPercentage ?? limite.maxPercentage * 0.9);
+      });
+
+      if (relevantes.length === 0) {
+        const maior = sujeitos[0];
+        const sufixo = limite ? " — nenhuma na faixa de atenção" : "";
+        log(
+          maior
+            ? `   maior posição sujeita ao teto: ${maior.ticker} ${pct((maior.valueBRL / total) * 100)}${sufixo}`
+            : "   nenhuma posição sujeita ao teto individual",
+        );
+        continue;
+      }
+      for (const e of relevantes) {
+        const p = (e.valueBRL / total) * 100;
+        const flag = p > limite!.maxPercentage ? "🔴" : "🟡";
+        log(`   ${flag} ${e.ticker.padEnd(22)} ${brl(e.valueBRL).padStart(13)}  ${pct(p).padStart(7)}`);
+      }
+    }
+
+    expect(porBucket.size).toBeGreaterThan(0);
+  });
+
   it("pendências", () => {
     log("\n═══ PENDÊNCIAS ═══");
     log(`risk_bucket vazio .............. ${registros.filter((r) => !r.risk_bucket).length}/${registros.length}`);
+    log(`risk_bucket NAO_CLASSIFICADO ... ${registros.filter((r) => (r.risk_bucket || "NAO_CLASSIFICADO") === "NAO_CLASSIFICADO").length}/${registros.length}`);
     log(`investment_style vazio ......... ${registros.filter((r) => !r.investment_style).length}/${registros.length}`);
     log(`average_cost ausente ........... ${registros.filter((r) => !r.average_cost).length}/${registros.length}`);
     const semIdx = registros.filter((r) => ["TESOURO_DIRETO","CDB","DEBENTURE","CRI","CRA","BOND"].includes(r.asset_type!) && !r.indexador);

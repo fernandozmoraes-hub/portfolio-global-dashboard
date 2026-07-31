@@ -276,16 +276,24 @@ export async function getAllocationTargets(
 export async function getRiskLimits(db: SupabaseClient): Promise<RiskLimit[]> {
   const { data, error } = await db
     .from("risk_limits")
-    .select("scope, scope_key, max_percentage")
+    .select("scope, scope_key, max_percentage, warn_percentage, exempt_asset_types")
     .eq("is_active", true);
 
   if (error) throw new Error(`Falha ao ler limites de risco: ${error.message}`);
 
-  return (data ?? []).map((row) => ({
-    scope: row.scope as RiskLimit["scope"],
-    scopeKey: (row.scope_key as string | null) ?? null,
-    maxPercentage: num(row.max_percentage),
-  }));
+  return (data ?? []).map((row) => {
+    const warn = row.warn_percentage as number | string | null;
+    return {
+      scope: row.scope as RiskLimit["scope"],
+      scopeKey: (row.scope_key as string | null) ?? null,
+      maxPercentage: num(row.max_percentage),
+      // Nulo no banco significa "usar o padrão de 90% do teto", não zero — por
+      // isso a coluna não pode passar por num(), que converteria null em 0 e
+      // deixaria todo limite permanentemente amarelo.
+      ...(warn === null || warn === undefined ? {} : { warnPercentage: num(warn) }),
+      exemptAssetTypes: (row.exempt_asset_types as string[] | null) ?? [],
+    };
+  });
 }
 
 /**

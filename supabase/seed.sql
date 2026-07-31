@@ -113,19 +113,38 @@ begin
   -- ---------------------------------------------------------------------------
   -- Limites de risco (avaliados sobre a exposição CONSOLIDADA)
   -- ---------------------------------------------------------------------------
-  insert into risk_limits (id, user_id, scope, scope_key, max_percentage, description)
+  -- CORE tem faixa de atenção explícita (5,00%–5,50%): oscilação de preço não
+  -- deve virar ordem de venda. DEFENSIVE isenta o Tesouro — teto individual
+  -- mede risco de emissor único, e soberano é monitorado por outros recortes.
+  insert into risk_limits (
+    id, user_id, scope, scope_key,
+    max_percentage, warn_percentage, exempt_asset_types, description
+  )
   select md5(v_user::text || 'limit:' || l.scope || ':' || coalesce(l.key, '*'))::uuid,
-         v_user, l.scope::risk_limit_scope, l.key, l.pct, l.descr
+         v_user, l.scope::risk_limit_scope, l.key, l.pct, l.warn, l.exempt, l.descr
   from (values
-    ('SINGLE_ASSET', 'CORE',        5.00,  'Ação core: máximo 5% da carteira global'),
-    ('SINGLE_ASSET', 'GROWTH',      3.00,  'Growth individual: máximo 3%'),
-    ('SINGLE_ASSET', 'SATELLITE',   3.00,  'Satélite individual: máximo 3%'),
-    ('SINGLE_ASSET', 'ASYMMETRIC',  0.50,  'Posição assimétrica: máximo 0,50%'),
-    ('SECTOR',       null,         25.00,  'Concentração máxima por setor'),
-    ('COUNTRY',      'BR',         70.00,  'Concentração máxima em Brasil'),
-    ('CURRENCY',     'BRL',        75.00,  'Exposição máxima a BRL')
-  ) as l(scope, key, pct, descr)
-  on conflict (id) do update set max_percentage = excluded.max_percentage;
+    ('SINGLE_ASSET', 'CORE',        5.50,  5.00::numeric, '{}'::text[],
+     'Ação core: atenção a partir de 5%, violação acima de 5,5%'),
+    ('SINGLE_ASSET', 'GROWTH',      3.00,  null,          '{}'::text[],
+     'Growth individual: máximo 3%'),
+    ('SINGLE_ASSET', 'SATELLITE',   2.00,  null,          '{}'::text[],
+     'Satélite individual: máximo 2%'),
+    ('SINGLE_ASSET', 'ASYMMETRIC',  0.50,  null,          '{}'::text[],
+     'Posição assimétrica: máximo 0,50%'),
+    ('SINGLE_ASSET', 'DEFENSIVE',   3.00,  null,          '{TESOURO_DIRETO}'::text[],
+     'Defensiva individual: máximo 3%; Tesouro Direto isento'),
+    ('SECTOR',       null,         25.00,  null,          '{}'::text[],
+     'Concentração máxima por setor'),
+    ('COUNTRY',      'BR',         70.00,  null,          '{}'::text[],
+     'Concentração máxima em Brasil'),
+    ('CURRENCY',     'BRL',        75.00,  null,          '{}'::text[],
+     'Exposição máxima a BRL')
+  ) as l(scope, key, pct, warn, exempt, descr)
+  on conflict (id) do update set
+    max_percentage     = excluded.max_percentage,
+    warn_percentage    = excluded.warn_percentage,
+    exempt_asset_types = excluded.exempt_asset_types,
+    description        = excluded.description;
 
   -- ---------------------------------------------------------------------------
   -- Benchmarks (valores mensais entram manualmente no MVP)
